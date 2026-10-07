@@ -14,9 +14,9 @@ import type { CliContext } from "../context.js";
 import { resolveAlias } from "./account.js";
 
 const USAGE = `Usage:
-  sail schema pull [alias] [--records customer,salesOrder] [--keep-raw]
-  sail schema diff <alias-or-file> <alias-or-file>
-  sail schema inspect [alias] [--records customer,salesOrder]   Report the raw metadata's shape (needs --keep-raw)
+  mynt schema pull [alias] [--records customer,salesOrder] [--keep-raw]
+  mynt schema diff <alias-or-file> <alias-or-file>
+  mynt schema inspect [alias] [--records customer,salesOrder]   Report the raw metadata's shape (needs --keep-raw)
 `;
 
 export async function runSchema(args: ParsedArgs, context: CliContext): Promise<number> {
@@ -44,11 +44,11 @@ async function pull(args: ParsedArgs, context: CliContext): Promise<number> {
   const recordsOption = stringOption(args.options, "records");
   const raw = await pullRawMetadata(client, {
     ...(recordsOption ? { records: recordsOption.split(",").map((r) => r.trim()).filter(Boolean) } : {}),
-    onProgress: (done, total, type) => context.stderr(`sail: [${done}/${total}] ${type}\n`),
+    onProgress: (done, total, type) => context.stderr(`mynt: [${done}/${total}] ${type}\n`),
   });
 
   for (const [type, reason] of Object.entries(raw.failures ?? {})) {
-    context.stderr(`sail: skipped ${type}: ${reason}\n`);
+    context.stderr(`mynt: skipped ${type}: ${reason}\n`);
   }
   if (Object.keys(raw.records).length === 0) {
     throw new UserError("No record metadata could be fetched; every listed type failed. See the messages above.");
@@ -61,7 +61,7 @@ async function pull(args: ParsedArgs, context: CliContext): Promise<number> {
       writeFileSync(join(dir, `${type}.json`), JSON.stringify(schema, null, 2) + "\n");
     }
     if (raw.failures) writeFileSync(join(dir, "_failures.json"), JSON.stringify(raw.failures, null, 2) + "\n");
-    context.stderr(`sail: raw metadata written to ${dir}\n`);
+    context.stderr(`mynt: raw metadata written to ${dir}\n`);
   }
 
   const { document, warnings } = normalize(raw, { account: profile.accountId, pulledAt: context.now().toISOString() });
@@ -73,16 +73,16 @@ async function pull(args: ParsedArgs, context: CliContext): Promise<number> {
 
   const recordCount = Object.keys(document.records).length;
   const fieldCount = Object.values(document.records).reduce((n, r) => n + Object.keys(r.fields).length, 0);
-  for (const warning of warnings) context.stderr(`sail: warning: ${warning}\n`);
+  for (const warning of warnings) context.stderr(`mynt: warning: ${warning}\n`);
 
   if (outcome === "unchanged") {
-    context.stdout(`sail: ${path} is up to date (${recordCount} records, ${fieldCount} fields; no changes since ${previous?.source.kind === "account" ? previous.source.pulledAt : "last pull"}).\n`);
+    context.stdout(`mynt: ${path} is up to date (${recordCount} records, ${fieldCount} fields; no changes since ${previous?.source.kind === "account" ? previous.source.pulledAt : "last pull"}).\n`);
     return 0;
   }
-  context.stdout(`sail: wrote ${path} (${recordCount} records, ${fieldCount} fields).\n`);
+  context.stdout(`mynt: wrote ${path} (${recordCount} records, ${fieldCount} fields).\n`);
   if (previous) {
     const changes = diffSchemas(previous, document);
-    context.stdout(`sail: ${changes.length} change${changes.length === 1 ? "" : "s"} since the previous snapshot:\n`);
+    context.stdout(`mynt: ${changes.length} change${changes.length === 1 ? "" : "s"} since the previous snapshot:\n`);
     for (const change of changes.slice(0, 50)) context.stdout(`  ${formatChange(change)}\n`);
     if (changes.length > 50) context.stdout(`  ... and ${changes.length - 50} more\n`);
   }
@@ -94,7 +94,7 @@ async function inspect(args: ParsedArgs, context: CliContext): Promise<number> {
   const alias = resolveAlias(args.positional[1], context);
   const root = findProjectRoot(context.cwd) ?? context.cwd;
   const dir = rawMetadataDir(root, alias);
-  if (!existsSync(dir)) throw new UserError(`No raw metadata at ${dir}.\nRun \`sail schema pull ${alias} --keep-raw\` first.`);
+  if (!existsSync(dir)) throw new UserError(`No raw metadata at ${dir}.\nRun \`mynt schema pull ${alias} --keep-raw\` first.`);
   const snapshotPath = schemaSnapshotPath(root, alias);
   const snapshot = existsSync(snapshotPath) ? readSnapshot(snapshotPath) : undefined;
   const recordsOption = stringOption(args.options, "records");
@@ -119,10 +119,10 @@ async function diff(args: ParsedArgs, context: CliContext): Promise<number> {
   const after = readSnapshot(snapshotArgument(b, context));
   const changes = diffSchemas(before, after);
   if (changes.length === 0) {
-    context.stdout(`sail: no structural differences between ${a} and ${b}.\n`);
+    context.stdout(`mynt: no structural differences between ${a} and ${b}.\n`);
     return 0;
   }
   for (const change of changes) context.stdout(formatChange(change) + "\n");
-  context.stdout(`sail: ${changes.length} change${changes.length === 1 ? "" : "s"}.\n`);
+  context.stdout(`mynt: ${changes.length} change${changes.length === 1 ? "" : "s"}.\n`);
   return 1;
 }

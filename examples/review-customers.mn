@@ -6,7 +6,7 @@ scheduled {
         let record = load Customer(customer.id)
 
         if record.comments == "" {
-            record.comments = "Reviewed by Sail"
+            record.comments = "Reviewed by Mynt"
             save record
         }
     }

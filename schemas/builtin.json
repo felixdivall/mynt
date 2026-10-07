@@ -1,5 +1,5 @@
 {
-  "sailSchemaVersion": 1,
+  "myntSchemaVersion": 1,
   "source": {
     "kind": "builtin"
   },
@@ -73,8 +73,8 @@
         }
       }
     },
-    "customrecord_sail_log": {
-      "name": "SailLog",
+    "customrecord_mynt_log": {
+      "name": "MyntLog",
       "custom": true,
       "fields": {
         "name": {
@@ -82,13 +82,13 @@
           "label": "Name",
           "writable": true
         },
-        "custrecord_sail_message": {
+        "custrecord_mynt_message": {
           "type": "Text",
           "label": "Message",
           "writable": true,
           "custom": true
         },
-        "custrecord_sail_done": {
+        "custrecord_mynt_done": {
           "type": "Bool",
           "label": "Done",
           "writable": true,

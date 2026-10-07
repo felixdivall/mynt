@@ -1,5 +1,5 @@
 /**
- * Record lifecycle analysis: the flow-sensitive half of Sail's record model.
+ * Record lifecycle analysis: the flow-sensitive half of Mynt's record model.
  *
  * The binder decides what a value *is* (its record type and whether the
  * script owns it). This pass decides what has *happened* to an owned record

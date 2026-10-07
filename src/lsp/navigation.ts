@@ -4,7 +4,7 @@ import type { SemanticDocument } from "../semantic/query.js";
 import { declarationOf, symbolAt } from "../semantic/symbols.js";
 import { wordOffsetAt } from "./position.js";
 
-/** Where the symbol at `offset` was declared. Only locals have declarations in a Sail file. */
+/** Where the symbol at `offset` was declared. Only locals have declarations in a Mynt file. */
 export function definitionAt(doc: SemanticDocument, offset: number): Span | undefined {
   const symbol = symbolAt(doc, wordOffsetAt(doc.text, offset));
   return symbol && declarationOf(symbol);

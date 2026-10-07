@@ -28,7 +28,7 @@ import type {
 import type { Builtin } from "./builtins.js";
 import { resolveName } from "./binder.js";
 import { contains, nodeAt, type SemanticDocument, type TreeNode } from "./query.js";
-import { isLineType, isRecordType, type SailType } from "./types.js";
+import { isLineType, isRecordType, type MyntType } from "./types.js";
 
 export type SemanticSymbol =
   | { kind: "local"; local: LocalSymbol }
@@ -140,7 +140,7 @@ function initializerSymbol(doc: SemanticDocument, initializer: LineInitializer):
 }
 
 /** The field symbol for a read or write through a record or a line. */
-function fieldSymbol(receiverType: SailType, field: FieldSchema): SemanticSymbol | undefined {
+function fieldSymbol(receiverType: MyntType, field: FieldSchema): SemanticSymbol | undefined {
   if (isRecordType(receiverType)) return { kind: "field", record: receiverType.record, field };
   if (isLineType(receiverType)) return { kind: "field", record: receiverType.parent.record, field, sublist: receiverType.sublist };
   return undefined;

@@ -9,20 +9,20 @@ import { runSchema } from "./commands/schema.js";
 import { defaultContext, type CliContext } from "./context.js";
 
 const USAGE = `Usage:
-  sail check <file.sail> [--schema <snapshot.json>]   Parse, bind, and report diagnostics
-  sail build <file.sail> [--schema <snapshot.json>]   Compile to SuiteScript 2.1 next to the source file
+  mynt check <file.mn> [--schema <snapshot.json>]   Parse, bind, and report diagnostics
+  mynt build <file.mn> [--schema <snapshot.json>]   Compile to SuiteScript 2.1 next to the source file
 
-  sail account add <alias>      Configure a NetSuite account (stored per user, never in the project)
-  sail account list
-  sail account use <alias>      Make <alias> the project default (writes sail.json)
+  mynt account add <alias>      Configure a NetSuite account (stored per user, never in the project)
+  mynt account list
+  mynt account use <alias>      Make <alias> the project default (writes mynt.json)
 
-  sail auth login [alias]       Log in with OAuth 2.0 in the browser
-  sail auth logout [alias]
+  mynt auth login [alias]       Log in with OAuth 2.0 in the browser
+  mynt auth logout [alias]
 
-  sail schema pull [alias]      Write .sail/schema/<alias>.json from the account's metadata
-  sail schema diff <a> <b>      Compare two snapshots (aliases or files)
+  mynt schema pull [alias]      Write .mynt/schema/<alias>.json from the account's metadata
+  mynt schema diff <a> <b>      Compare two snapshots (aliases or files)
 
-  sail lsp                      Run the language server on stdio (for editors)
+  mynt lsp                      Run the language server on stdio (for editors)
 
 Options: --verbose shows error details.
 `;
@@ -51,9 +51,9 @@ export async function main(argv: string[], context: CliContext = defaultContext(
     }
   } catch (error) {
     if (error instanceof UserError) {
-      context.stderr(`sail: ${error.message}\n`);
+      context.stderr(`mynt: ${error.message}\n`);
       if (error.details) {
-        context.stderr(args.options.verbose ? `\n${error.details}\n` : "sail: run with --verbose for details.\n");
+        context.stderr(args.options.verbose ? `\n${error.details}\n` : "mynt: run with --verbose for details.\n");
       }
       return 1;
     }

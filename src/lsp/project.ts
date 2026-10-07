@@ -1,9 +1,9 @@
 /**
  * Which schema a document compiles against. Resolution is the CLI's: walk
- * up from the file to `sail.json`, read the alias, load
- * `.sail/schema/<alias>.json`; without a project, the built-in sample.
+ * up from the file to `mynt.json`, read the alias, load
+ * `.mynt/schema/<alias>.json`; without a project, the built-in sample.
  * State is keyed by project root and refreshed when either file's mtime
- * changes, so a `sail schema pull` is picked up without a restart.
+ * changes, so a `mynt schema pull` is picked up without a restart.
  * No network access, ever.
  */
 import { existsSync, statSync } from "node:fs";
@@ -57,7 +57,7 @@ export class ProjectRegistry {
     const root = findProjectRoot(dirname(filePath));
     if (!root) return { root: undefined, provider: this.builtinSchema(), description: "built-in sample schema" };
 
-    const configPath = `${root}/sail.json`;
+    const configPath = `${root}/mynt.json`;
     const alias = safeReadAlias(root);
     const snapshotPath = alias ? schemaSnapshotPath(root, alias) : undefined;
     const configMtime = mtime(configPath);
@@ -77,7 +77,7 @@ export class ProjectRegistry {
         root,
         provider: this.builtinSchema(),
         description: "built-in sample schema",
-        problem: `No schema snapshot found for account '${alias}'. Run \`sail schema pull ${alias}\`.`,
+        problem: `No schema snapshot found for account '${alias}'. Run \`mynt schema pull ${alias}\`.`,
       };
     }
     try {

@@ -14,7 +14,7 @@ import type { CliContext } from "../context.js";
 
 /**
  * Which schema the compiler gets, in order: `--schema <file>`, the project's
- * default account snapshot (`sail.json` -> .sail/schema/<alias>.json), the
+ * default account snapshot (`mynt.json` -> .mynt/schema/<alias>.json), the
  * built-in sample. The compiler only ever receives a SchemaProvider.
  */
 export function resolveSchema(context: CliContext, schemaOption: string | undefined): { provider: SchemaProvider; description: string } {
@@ -27,7 +27,7 @@ export function resolveSchema(context: CliContext, schemaOption: string | undefi
   if (root && alias) {
     const path = schemaSnapshotPath(root, alias);
     if (!existsSync(path)) {
-      throw new UserError(`sail.json selects account '${alias}', but there is no snapshot at ${path}.\nRun \`sail schema pull ${alias}\`.`);
+      throw new UserError(`mynt.json selects account '${alias}', but there is no snapshot at ${path}.\nRun \`mynt schema pull ${alias}\`.`);
     }
     return { provider: new DocumentSchemaProvider(readSnapshot(path)), description: `account '${alias}'` };
   }
@@ -36,7 +36,7 @@ export function resolveSchema(context: CliContext, schemaOption: string | undefi
 
 export async function runCompile(command: "check" | "build", args: ParsedArgs, context: CliContext): Promise<number> {
   const file = args.positional[0];
-  if (!file) throw new UserError(`Usage: sail ${command} <file.sail> [--schema <snapshot.json>]`);
+  if (!file) throw new UserError(`Usage: mynt ${command} <file.mn> [--schema <snapshot.json>]`);
 
   let source: string;
   try {
@@ -56,19 +56,19 @@ export async function runCompile(command: "check" | "build", args: ParsedArgs, c
   const warnings = result.diagnostics.length - errors;
   const summary = [plural(errors, "error"), warnings > 0 ? plural(warnings, "warning") : ""].filter(Boolean).join(", ");
   if (errors > 0 || !result.output) {
-    context.stderr(`sail: ${summary} in ${file}\n`);
+    context.stderr(`mynt: ${summary} in ${file}\n`);
     return 1;
   }
-  if (warnings > 0) context.stderr(`sail: ${summary} in ${file}\n`);
+  if (warnings > 0) context.stderr(`mynt: ${summary} in ${file}\n`);
 
   if (command === "check") {
-    context.stdout(`sail: ${file} OK (${describeUnit(result.unit!)}, schema: ${schema.description})\n`);
+    context.stdout(`mynt: ${file} OK (${describeUnit(result.unit!)}, schema: ${schema.description})\n`);
     return 0;
   }
 
   const outFile = join(dirname(file), basename(file, extname(file)) + ".js");
   writeFileSync(resolve(context.cwd, outFile), result.output);
-  context.stdout(`sail: wrote ${outFile}\n`);
+  context.stdout(`mynt: wrote ${outFile}\n`);
   return 0;
 }
 

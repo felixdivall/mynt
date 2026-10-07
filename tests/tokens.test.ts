@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { LineIndex } from "../src/lsp/position.js";
 import { ProjectRegistry } from "../src/lsp/project.js";
 import { encodeSemanticTokens, SEMANTIC_TOKENS_LEGEND, TOKEN_MODIFIERS, TOKEN_TYPES } from "../src/lsp/semantic-tokens.js";
-import { SailLanguageService } from "../src/lsp/service.js";
+import { MyntLanguageService } from "../src/lsp/service.js";
 import { signatureHelpAt } from "../src/lsp/signature-help.js";
 import { analyze } from "../src/semantic/query.js";
 import { semanticTokens } from "../src/semantic/tokens.js";
@@ -10,7 +10,7 @@ import { schema } from "./helpers.js";
 
 /** `name:kind[+mod...]` for every token, in order, for readable assertions. */
 function tokens(text: string): string[] {
-  const doc = analyze(text, "t.sail", schema);
+  const doc = analyze(text, "t.mn", schema);
   return semanticTokens(doc).map((t) => {
     const name = text.slice(t.span.start.offset, t.span.end.offset);
     return `${name}:${t.kind}${t.modifiers.map((m) => `+${m}`).join("")}`;
@@ -19,7 +19,7 @@ function tokens(text: string): string[] {
 
 /** The token at the Nth occurrence of `name`. */
 function tokenAt(text: string, name: string, occurrence = 0): string | undefined {
-  const doc = analyze(text, "t.sail", schema);
+  const doc = analyze(text, "t.mn", schema);
   let offset = -1;
   for (let i = 0; i <= occurrence; i++) offset = text.indexOf(name, offset + 1);
   const token = semanticTokens(doc).find((t) => t.span.start.offset === offset);
@@ -29,7 +29,7 @@ function tokenAt(text: string, name: string, occurrence = 0): string | undefined
 function help(source: string) {
   const offset = source.indexOf("§");
   const text = source.slice(0, offset) + source.slice(offset + 1);
-  const result = signatureHelpAt(analyze(text, "t.sail", schema), offset);
+  const result = signatureHelpAt(analyze(text, "t.mn", schema), offset);
   if (!result) return undefined;
   const active = result.signature.parameters[result.activeParameter];
   return `${result.signature.label} @${result.activeParameter}${active ? ` [${active.label}]` : ""}`;
@@ -145,7 +145,7 @@ describe("semantic tokens: schema symbols and contextual words", () => {
 describe("semantic tokens: protocol", () => {
   it("encodes sorted, non-overlapping tokens with relative UTF-16 positions", () => {
     const text = `scheduled {\n    log.debug("😀 hi")\n    let c = load Customer("1")\n    save c\n}\n`;
-    const doc = analyze(text, "t.sail", schema);
+    const doc = analyze(text, "t.mn", schema);
     const data = encodeSemanticTokens(doc, new LineIndex(text));
     expect(data.length % 5).toBe(0);
     const rows: number[][] = [];
@@ -163,9 +163,9 @@ describe("semantic tokens: protocol", () => {
   });
 
   it("is served by the language service", () => {
-    const svc = new SailLanguageService(new ProjectRegistry(() => schema));
-    svc.open("untitled:t.sail", `scheduled {\n    let c = create Customer\n    save c\n}\n`, 1);
-    expect(svc.semanticTokens("untitled:t.sail").data.length).toBe(7 * 5);
+    const svc = new MyntLanguageService(new ProjectRegistry(() => schema));
+    svc.open("untitled:t.mn", `scheduled {\n    let c = create Customer\n    save c\n}\n`, 1);
+    expect(svc.semanticTokens("untitled:t.mn").data.length).toBe(7 * 5);
   });
 });
 
@@ -205,14 +205,14 @@ describe("signature help", () => {
   });
 
   it("is served by the language service with LSP parameter ranges", () => {
-    const svc = new SailLanguageService(new ProjectRegistry(() => schema));
+    const svc = new MyntLanguageService(new ProjectRegistry(() => schema));
     const text = `${FN}scheduled {\n    let r = calculate(10, )\n}\n`;
-    svc.open("untitled:t.sail", text, 1);
+    svc.open("untitled:t.mn", text, 1);
     const lines = new LineIndex(text);
-    const result = svc.signatureHelp("untitled:t.sail", lines.positionAt(text.indexOf("10, ") + 4))!;
+    const result = svc.signatureHelp("untitled:t.mn", lines.positionAt(text.indexOf("10, ") + 4))!;
     expect(result.activeParameter).toBe(1);
     expect(result.signatures[0]!.parameters.map((p) => p.label)).toEqual([[13, 26], [28, 46]]);
     expect(result.signatures[0]!.label.slice(13, 26)).toBe("value: Number");
-    expect(svc.signatureHelp("untitled:t.sail", { line: 0, character: 0 })).toBeNull();
+    expect(svc.signatureHelp("untitled:t.mn", { line: 0, character: 0 })).toBeNull();
   });
 });

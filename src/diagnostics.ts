@@ -34,56 +34,56 @@ export interface Diagnostic {
 }
 
 /**
- * Stable diagnostic codes. SAIL0xxx is syntax, SAIL1xxx is semantic errors,
- * SAIL2xxx is semantic warnings. Codes are never renumbered once published.
+ * Stable diagnostic codes. MYNT0xxx is syntax, MYNT1xxx is semantic errors,
+ * MYNT2xxx is semantic warnings. Codes are never renumbered once published.
  */
 export const DiagnosticCode = {
-  SyntaxError: "SAIL0001",
-  UnknownRecordType: "SAIL1001",
-  UnknownEventName: "SAIL1002",
-  MixedRecordTypes: "SAIL1003",
-  UnknownField: "SAIL1004",
-  ReadOnlyField: "SAIL1005",
-  TypeMismatch: "SAIL1006",
-  WriteInAfterSubmit: "SAIL1007",
-  DuplicateEntryPoint: "SAIL1008",
-  InvalidAssignmentTarget: "SAIL1009",
-  UnknownIdentifier: "SAIL1010",
-  MemberOnNonRecord: "SAIL1011",
-  NotCallable: "SAIL1012",
-  ArgumentCount: "SAIL1013",
-  ArgumentType: "SAIL1014",
-  MixedScriptKinds: "SAIL1015",
-  UnknownBuiltinMember: "SAIL1016",
-  DuplicateLocal: "SAIL1017",
-  RecordTypeArgument: "SAIL1018",
-  RecordOperationOnNonRecord: "SAIL1019",
-  SaveContextRecord: "SAIL1020",
-  ConditionNotBool: "SAIL1021",
-  IncomparableTypes: "SAIL1022",
-  UnsupportedComparison: "SAIL1023",
-  LogicalOperandNotBool: "SAIL1024",
-  CannotDelete: "SAIL1025",
-  DeleteBeforeSave: "SAIL1026",
-  UseAfterDelete: "SAIL1027",
-  DoubleDelete: "SAIL1028",
-  NotIterable: "SAIL1029",
-  ReadOnlyQueryResult: "SAIL1030",
-  UnsupportedQueryCondition: "SAIL1031",
-  AmbiguousQueryName: "SAIL1032",
-  LineNotPersistable: "SAIL1033",
-  SublistOnQueryRow: "SAIL1034",
-  InvalidLineInitializer: "SAIL1035",
-  UseAfterRemove: "SAIL1036",
-  DoubleRemove: "SAIL1037",
-  ModifySublistWhileIterating: "SAIL1038",
-  DuplicateFunction: "SAIL1039",
-  InvalidSignatureType: "SAIL1040",
-  ReturnMismatch: "SAIL1041",
-  MissingReturn: "SAIL1042",
-  RecursionNotSupported: "SAIL1043",
-  ArgumentOrigin: "SAIL1044",
-  UnsavedMutation: "SAIL2001",
+  SyntaxError: "MYNT0001",
+  UnknownRecordType: "MYNT1001",
+  UnknownEventName: "MYNT1002",
+  MixedRecordTypes: "MYNT1003",
+  UnknownField: "MYNT1004",
+  ReadOnlyField: "MYNT1005",
+  TypeMismatch: "MYNT1006",
+  WriteInAfterSubmit: "MYNT1007",
+  DuplicateEntryPoint: "MYNT1008",
+  InvalidAssignmentTarget: "MYNT1009",
+  UnknownIdentifier: "MYNT1010",
+  MemberOnNonRecord: "MYNT1011",
+  NotCallable: "MYNT1012",
+  ArgumentCount: "MYNT1013",
+  ArgumentType: "MYNT1014",
+  MixedScriptKinds: "MYNT1015",
+  UnknownBuiltinMember: "MYNT1016",
+  DuplicateLocal: "MYNT1017",
+  RecordTypeArgument: "MYNT1018",
+  RecordOperationOnNonRecord: "MYNT1019",
+  SaveContextRecord: "MYNT1020",
+  ConditionNotBool: "MYNT1021",
+  IncomparableTypes: "MYNT1022",
+  UnsupportedComparison: "MYNT1023",
+  LogicalOperandNotBool: "MYNT1024",
+  CannotDelete: "MYNT1025",
+  DeleteBeforeSave: "MYNT1026",
+  UseAfterDelete: "MYNT1027",
+  DoubleDelete: "MYNT1028",
+  NotIterable: "MYNT1029",
+  ReadOnlyQueryResult: "MYNT1030",
+  UnsupportedQueryCondition: "MYNT1031",
+  AmbiguousQueryName: "MYNT1032",
+  LineNotPersistable: "MYNT1033",
+  SublistOnQueryRow: "MYNT1034",
+  InvalidLineInitializer: "MYNT1035",
+  UseAfterRemove: "MYNT1036",
+  DoubleRemove: "MYNT1037",
+  ModifySublistWhileIterating: "MYNT1038",
+  DuplicateFunction: "MYNT1039",
+  InvalidSignatureType: "MYNT1040",
+  ReturnMismatch: "MYNT1041",
+  MissingReturn: "MYNT1042",
+  RecursionNotSupported: "MYNT1043",
+  ArgumentOrigin: "MYNT1044",
+  UnsavedMutation: "MYNT2001",
 } as const;
 
 export type DiagnosticCode = (typeof DiagnosticCode)[keyof typeof DiagnosticCode];
@@ -109,9 +109,9 @@ export class DiagnosticBag {
 /**
  * Renders a diagnostic in the compiler's standard text format:
  *
- *   error SAIL1004: Customer has no field 'notAField'
+ *   error MYNT1004: Customer has no field 'notAField'
  *
- *     src/customer.sail:2:14
+ *     src/customer.mn:2:14
  *
  *     2 |     customer.notAField = "Nope"
  *       |              ^^^^^^^^^

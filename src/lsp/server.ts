@@ -1,18 +1,21 @@
 /**
  * Language Server Protocol transport over stdio. Everything editor-facing
- * is in SailLanguageService; this file only moves messages. Any LSP client
- * (Zed, VS Code, Neovim) that can run `sail lsp` can use it.
+ * is in MyntLanguageService; this file only moves messages. Any LSP client
+ * (Zed, VS Code, Neovim) that can run `mynt lsp` can use it.
  */
 import { createConnection, ErrorCodes, ProposedFeatures, ResponseError, TextDocuments, TextDocumentSyncKind } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { ProjectRegistry } from "./project.js";
 import { SEMANTIC_TOKENS_LEGEND } from "./semantic-tokens.js";
-import { SailLanguageService } from "./service.js";
+import { MyntLanguageService } from "./service.js";
+
+/** How the server identifies itself to clients. */
+export const SERVER_NAME = "mynt";
 
 export function startServer(): Promise<void> {
   const connection = createConnection(ProposedFeatures.all, process.stdin, process.stdout);
   const documents = new TextDocuments(TextDocument);
-  const service = new SailLanguageService(new ProjectRegistry());
+  const service = new MyntLanguageService(new ProjectRegistry());
 
   connection.onInitialize(() => ({
     capabilities: {
@@ -26,7 +29,7 @@ export function startServer(): Promise<void> {
       semanticTokensProvider: { legend: SEMANTIC_TOKENS_LEGEND, full: true, range: false },
       signatureHelpProvider: { triggerCharacters: ["(", ","] },
     },
-    serverInfo: { name: "sail" },
+    serverInfo: { name: SERVER_NAME },
   }));
 
   const publish = (document: TextDocument): void => {
@@ -36,7 +39,7 @@ export function startServer(): Promise<void> {
 
   documents.onDidOpen((event) => {
     publish(event.document);
-    connection.console.log(`sail: ${event.document.uri} checked against ${service.schemaDescription(event.document.uri)}`);
+    connection.console.log(`mynt: ${event.document.uri} checked against ${service.schemaDescription(event.document.uri)}`);
   });
   documents.onDidChangeContent((event) => publish(event.document));
   documents.onDidClose((event) => {

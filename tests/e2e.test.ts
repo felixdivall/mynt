@@ -2,21 +2,21 @@ import { parse as parseJs } from "acorn";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { formatDiagnostic } from "../src/diagnostics.js";
-import { compileSail } from "./helpers.js";
+import { compileMynt } from "./helpers.js";
 import { FakeRecord, loadSuiteScriptModule, userEventContext } from "./harness/fake-netsuite.js";
 
-const VALID = readFileSync(new URL("../examples/customer.sail", import.meta.url), "utf8");
-const INVALID = readFileSync(new URL("../examples/customer-invalid.sail", import.meta.url), "utf8");
+const VALID = readFileSync(new URL("../examples/customer.mn", import.meta.url), "utf8");
+const INVALID = readFileSync(new URL("../examples/customer-invalid.mn", import.meta.url), "utf8");
 
-describe("end to end: Sail -> SuiteScript -> fake NetSuite", () => {
+describe("end to end: Mynt -> SuiteScript -> fake NetSuite", () => {
   it("compiles the valid example without diagnostics", () => {
-    const result = compileSail(VALID, "examples/customer.sail");
+    const result = compileMynt(VALID, "examples/customer.mn");
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toBeDefined();
   });
 
   it("produces a resolved ScriptUnit", () => {
-    const { unit } = compileSail(VALID);
+    const { unit } = compileMynt(VALID);
     expect(unit?.kind).toBe("UserEvent");
     expect(unit?.record.name).toBe("Customer");
     expect(unit?.record.id).toBe("customer");
@@ -31,60 +31,60 @@ describe("end to end: Sail -> SuiteScript -> fake NetSuite", () => {
     expect(write.kind).toBe("FieldWrite");
     expect(write.field.id).toBe("comments");
     expect(write.field.type).toBe("Text");
-    expect(write.value).toMatchObject({ kind: "StringLiteral", value: "Managed by Sail" });
+    expect(write.value).toMatchObject({ kind: "StringLiteral", value: "Managed by Mynt" });
     expect(write.span.start).toEqual({ offset: 54, line: 2, column: 5 });
   });
 
   it("generates JavaScript that acorn can parse as a script", () => {
-    const { output } = compileSail(VALID);
+    const { output } = compileMynt(VALID);
     expect(() => parseJs(output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
   });
 
   it("matches the expected generated SuiteScript", () => {
-    const { output } = compileSail(VALID, "examples/customer.sail");
+    const { output } = compileMynt(VALID, "examples/customer.mn");
     expect(output).toMatchSnapshot();
   });
 
   it("executes beforeSubmit on create and sets the comments field", () => {
-    const { output } = compileSail(VALID);
+    const { output } = compileMynt(VALID);
     const entryPoints = loadSuiteScriptModule(output!);
     expect(Object.keys(entryPoints)).toEqual(["beforeSubmit"]);
 
     const customer = new FakeRecord("customer");
     entryPoints.beforeSubmit!(userEventContext("create", customer));
 
-    expect(customer.setValueCalls).toEqual([{ fieldId: "comments", value: "Managed by Sail" }]);
-    expect(customer.getValue({ fieldId: "comments" })).toBe("Managed by Sail");
+    expect(customer.setValueCalls).toEqual([{ fieldId: "comments", value: "Managed by Mynt" }]);
+    expect(customer.getValue({ fieldId: "comments" })).toBe("Managed by Mynt");
   });
 
   it("executes beforeSubmit on edit as well", () => {
-    const { output } = compileSail(VALID);
+    const { output } = compileMynt(VALID);
     const customer = new FakeRecord("customer");
     loadSuiteScriptModule(output!).beforeSubmit!(userEventContext("edit", customer));
     expect(customer.setValueCalls).toHaveLength(1);
   });
 
   it("does nothing on events outside the filter", () => {
-    const { output } = compileSail(VALID);
+    const { output } = compileMynt(VALID);
     const customer = new FakeRecord("customer");
     loadSuiteScriptModule(output!).beforeSubmit!(userEventContext("delete", customer));
     expect(customer.setValueCalls).toEqual([]);
   });
 
   it("rejects the invalid example with a located diagnostic", () => {
-    const result = compileSail(INVALID, "src/customer.sail");
+    const result = compileMynt(INVALID, "src/customer.mn");
     expect(result.output).toBeUndefined();
     expect(result.diagnostics).toHaveLength(1);
 
     const diagnostic = result.diagnostics[0]!;
-    expect(diagnostic.code).toBe("SAIL1004");
+    expect(diagnostic.code).toBe("MYNT1004");
     expect(diagnostic.span.start).toMatchObject({ line: 2, column: 14 });
 
     expect(formatDiagnostic(diagnostic, INVALID)).toBe(
       [
-        "error SAIL1004: Customer has no field 'notAField'",
+        "error MYNT1004: Customer has no field 'notAField'",
         "",
-        "  src/customer.sail:2:14",
+        "  src/customer.mn:2:14",
         "",
         '  2 |     customer.notAField = "Nope"',
         "    |              ^^^^^^^^^",
@@ -95,12 +95,12 @@ describe("end to end: Sail -> SuiteScript -> fake NetSuite", () => {
 
 import { FakeNetSuite, scheduledContext } from "./harness/fake-netsuite.js";
 
-const SCHEDULED = readFileSync(new URL("../examples/scheduled.sail", import.meta.url), "utf8");
-const LOGGED = readFileSync(new URL("../examples/customer-logged.sail", import.meta.url), "utf8");
+const SCHEDULED = readFileSync(new URL("../examples/scheduled.mn", import.meta.url), "utf8");
+const LOGGED = readFileSync(new URL("../examples/customer-logged.mn", import.meta.url), "utf8");
 
 describe("end to end: scheduled script", () => {
   it("compiles, parses, and declares the scheduled script type with N/log", () => {
-    const result = compileSail(SCHEDULED, "examples/scheduled.sail");
+    const result = compileMynt(SCHEDULED, "examples/scheduled.mn");
     expect(result.diagnostics).toEqual([]);
     const output = result.output!;
     expect(() => parseJs(output, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
@@ -110,25 +110,25 @@ describe("end to end: scheduled script", () => {
   });
 
   it("executes and logs through the fake N/log module", () => {
-    const { output } = compileSail(SCHEDULED);
+    const { output } = compileMynt(SCHEDULED);
     const netsuite = new FakeNetSuite();
     const entryPoints = netsuite.load(output!);
     expect(Object.keys(entryPoints)).toEqual(["execute"]);
 
     entryPoints.execute!(scheduledContext());
 
-    expect(netsuite.log.calls).toEqual([{ level: "debug", title: "execute", details: "Hello from Sail" }]);
+    expect(netsuite.log.calls).toEqual([{ level: "debug", title: "execute", details: "Hello from Mynt" }]);
   });
 
   it("fails to load if N/log is not provided, proving the dependency is real", () => {
-    const { output } = compileSail(SCHEDULED);
+    const { output } = compileMynt(SCHEDULED);
     expect(() => loadSuiteScriptModule(output!, {})).toThrow("Fake NetSuite has no module 'N/log'");
   });
 });
 
 describe("end to end: user event with logging", () => {
   it("logs and mutates the record, and infers N/log", () => {
-    const result = compileSail(LOGGED, "examples/customer-logged.sail");
+    const result = compileMynt(LOGGED, "examples/customer-logged.mn");
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain('define(["N/log"], (log) => {');
     expect(result.output).toMatchSnapshot();
@@ -138,15 +138,15 @@ describe("end to end: user event with logging", () => {
     netsuite.load(result.output!).beforeSubmit!(userEventContext("create", customer));
 
     expect(netsuite.log.calls).toEqual([{ level: "audit", title: "beforeSubmit", details: "Customer create" }]);
-    expect(customer.setValueCalls).toEqual([{ fieldId: "comments", value: "Managed by Sail" }]);
+    expect(customer.setValueCalls).toEqual([{ fieldId: "comments", value: "Managed by Mynt" }]);
   });
 });
 
-const LOAD_CUSTOMER = readFileSync(new URL("../examples/load-customer.sail", import.meta.url), "utf8");
+const LOAD_CUSTOMER = readFileSync(new URL("../examples/load-customer.mn", import.meta.url), "utf8");
 
 describe("end to end: load returns a typed record", () => {
   it("compiles the load example to the expected SuiteScript", () => {
-    const result = compileSail(LOAD_CUSTOMER, "examples/load-customer.sail");
+    const result = compileMynt(LOAD_CUSTOMER, "examples/load-customer.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     expect(result.output).toContain('define(["N/log", "N/record"], (log, record) => {');
@@ -155,7 +155,7 @@ describe("end to end: load returns a typed record", () => {
   });
 
   it("loads Customer 123 through fake N/record and logs its email", () => {
-    const { output } = compileSail(LOAD_CUSTOMER);
+    const { output } = compileMynt(LOAD_CUSTOMER);
     const netsuite = new FakeNetSuite();
     netsuite.record.seed("customer", "123", { email: "hello@example.com" });
 
@@ -167,7 +167,7 @@ describe("end to end: load returns a typed record", () => {
 
   it("loads SalesOrder 456 and audits its memo", () => {
     const source = `scheduled {\n    let order = load SalesOrder("456")\n    log.audit(order.memo)\n}\n`;
-    const result = compileSail(source);
+    const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
 
@@ -180,15 +180,15 @@ describe("end to end: load returns a typed record", () => {
   });
 
   it("fails to load without N/record, proving the dependency is real", () => {
-    const { output } = compileSail(LOAD_CUSTOMER);
+    const { output } = compileMynt(LOAD_CUSTOMER);
     expect(() => loadSuiteScriptModule(output!, { "N/log": new FakeNetSuite().log })).toThrow(
       "Fake NetSuite has no module 'N/record'",
     );
   });
 
-  it("renames emitter-introduced names that collide with Sail locals", () => {
+  it("renames emitter-introduced names that collide with Mynt locals", () => {
     const source = `scheduled {\n    let record = load Customer("1")\n    let context = load SalesOrder("2")\n    log.debug(record.email)\n    log.debug(context.memo)\n}\n`;
-    const result = compileSail(source);
+    const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain('define(["N/log", "N/record"], (log, record$) => {');
     expect(result.output).toContain("function execute(context$) {");
@@ -203,11 +203,11 @@ describe("end to end: load returns a typed record", () => {
   });
 });
 
-const SAVE_CUSTOMER = readFileSync(new URL("../examples/save-customer.sail", import.meta.url), "utf8");
+const SAVE_CUSTOMER = readFileSync(new URL("../examples/save-customer.mn", import.meta.url), "utf8");
 
 describe("end to end: record lifecycle", () => {
   it("compiles the save example to the expected SuiteScript", () => {
-    const result = compileSail(SAVE_CUSTOMER, "examples/save-customer.sail");
+    const result = compileMynt(SAVE_CUSTOMER, "examples/save-customer.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     expect(result.output).toContain('define(["N/record"], (record) => {');
@@ -216,21 +216,21 @@ describe("end to end: record lifecycle", () => {
   });
 
   it("loads, mutates, and persists Customer 123", () => {
-    const { output } = compileSail(SAVE_CUSTOMER);
+    const { output } = compileMynt(SAVE_CUSTOMER);
     const netsuite = new FakeNetSuite();
     const seeded = netsuite.record.seed("customer", "123", { comments: "Old" });
 
     netsuite.load(output!).execute!(scheduledContext());
 
     expect(netsuite.record.loadCalls).toEqual([{ type: "customer", id: "123" }]);
-    expect(seeded.setValueCalls).toEqual([{ fieldId: "comments", value: "Updated by Sail" }]);
+    expect(seeded.setValueCalls).toEqual([{ fieldId: "comments", value: "Updated by Mynt" }]);
     expect(seeded.saveCount).toBe(1);
-    expect(netsuite.record.persisted("customer", "123")).toEqual({ comments: "Updated by Sail" });
+    expect(netsuite.record.persisted("customer", "123")).toEqual({ comments: "Updated by Mynt" });
   });
 
   it("loads, mutates, and persists SalesOrder 456", () => {
     const source = `scheduled {\n    let order = load SalesOrder("456")\n    order.memo = "Processed"\n    save order\n}\n`;
-    const result = compileSail(source);
+    const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
 
@@ -243,7 +243,7 @@ describe("end to end: record lifecycle", () => {
   });
 
   it("a user event mutation persists through NetSuite, not through save", () => {
-    const result = compileSail(`beforeSubmit edit (customer: Customer) {\n    customer.comments = "Changed"\n}\n`);
+    const result = compileMynt(`beforeSubmit edit (customer: Customer) {\n    customer.comments = "Changed"\n}\n`);
     expect(result.diagnostics).toEqual([]);
     expect(result.output).not.toContain(".save()");
 
@@ -255,7 +255,7 @@ describe("end to end: record lifecycle", () => {
   });
 
   it("an unsaved mutation compiles with a warning and does not persist", () => {
-    const result = compileSail(`scheduled {\n    let customer = load Customer("123")\n    customer.comments = "Changed"\n}\n`);
+    const result = compileMynt(`scheduled {\n    let customer = load Customer("123")\n    customer.comments = "Changed"\n}\n`);
     expect(result.diagnostics.map((d) => d.severity)).toEqual(["warning"]);
 
     const netsuite = new FakeNetSuite();
@@ -266,17 +266,17 @@ describe("end to end: record lifecycle", () => {
 });
 
 describe("end to end: conditional logic", () => {
-  const IF = readFileSync(new URL("../examples/if-customer.sail", import.meta.url), "utf8");
+  const IF = readFileSync(new URL("../examples/if-customer.mn", import.meta.url), "utf8");
 
   it("compiles the if example to the expected SuiteScript", () => {
-    const result = compileSail(IF, "examples/if-customer.sail");
+    const result = compileMynt(IF, "examples/if-customer.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     expect(result.output).toMatchSnapshot();
   });
 
   it("uses strict comparison operators", () => {
-    const { output } = compileSail(
+    const { output } = compileMynt(
       `scheduled {\n    let o = load SalesOrder("1")\n    if o.memo != "" { }\n    if o.total >= 10 { }\n}\n`,
     );
     expect(output).toContain(`}) !== ""`);
@@ -285,7 +285,7 @@ describe("end to end: conditional logic", () => {
   });
 
   it("takes the true branch when the email is empty and persists the change", () => {
-    const { output } = compileSail(IF, "examples/if-customer.sail");
+    const { output } = compileMynt(IF, "examples/if-customer.mn");
     const netsuite = new FakeNetSuite();
     const customer = netsuite.record.seed("customer", "123", { email: "", comments: "Old" });
     netsuite.load(output!).execute!(scheduledContext());
@@ -296,7 +296,7 @@ describe("end to end: conditional logic", () => {
   });
 
   it("skips the branch when the email is set, and saves nothing", () => {
-    const { output } = compileSail(IF, "examples/if-customer.sail");
+    const { output } = compileMynt(IF, "examples/if-customer.mn");
     const netsuite = new FakeNetSuite();
     const customer = netsuite.record.seed("customer", "123", { email: "hello@example.com", comments: "Old" });
     netsuite.load(output!).execute!(scheduledContext());
@@ -307,7 +307,7 @@ describe("end to end: conditional logic", () => {
   });
 
   it("runs the else branch and numeric comparisons against seeded values", () => {
-    const { output, diagnostics } = compileSail(
+    const { output, diagnostics } = compileMynt(
       `scheduled {\n    let order = load SalesOrder("7")\n    if order.total > 100 {\n        order.memo = "Large"\n    } else {\n        order.memo = "Small"\n    }\n    save order\n}\n`,
     );
     expect(diagnostics).toEqual([]);
@@ -325,7 +325,7 @@ describe("end to end: conditional logic", () => {
   });
 
   it("a block-scoped local compiles to a block-scoped const", () => {
-    const { output, diagnostics } = compileSail(
+    const { output, diagnostics } = compileMynt(
       `scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        let n = "x"\n        log.debug(n)\n    } else {\n        let n = "y"\n        log.debug(n)\n    }\n}\n`,
     );
     expect(diagnostics).toEqual([]);
@@ -338,11 +338,11 @@ describe("end to end: conditional logic", () => {
 });
 
 describe("end to end: Boolean composition", () => {
-  const REVIEW = readFileSync(new URL("../examples/review-customer.sail", import.meta.url), "utf8");
-  const READY = readFileSync(new URL("../examples/ready-customer.sail", import.meta.url), "utf8");
+  const REVIEW = readFileSync(new URL("../examples/review-customer.mn", import.meta.url), "utf8");
+  const READY = readFileSync(new URL("../examples/ready-customer.mn", import.meta.url), "utf8");
 
   function run(source: string, file: string, values: Record<string, unknown>) {
-    const result = compileSail(source, file);
+    const result = compileMynt(source, file);
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     const netsuite = new FakeNetSuite();
@@ -352,32 +352,32 @@ describe("end to end: Boolean composition", () => {
   }
 
   it("compiles both examples to the expected SuiteScript", () => {
-    expect(compileSail(REVIEW, "examples/review-customer.sail").output).toMatchSnapshot();
-    expect(compileSail(READY, "examples/ready-customer.sail").output).toMatchSnapshot();
+    expect(compileMynt(REVIEW, "examples/review-customer.mn").output).toMatchSnapshot();
+    expect(compileMynt(READY, "examples/ready-customer.mn").output).toMatchSnapshot();
   });
 
   it("OR: true from the first comparison", () => {
-    const { persisted } = run(REVIEW, "examples/review-customer.sail", { email: "", comments: "Fine" });
+    const { persisted } = run(REVIEW, "examples/review-customer.mn", { email: "", comments: "Fine" });
     expect(persisted).toEqual({ email: "", comments: "Needs review" });
   });
 
   it("OR: true from the second comparison", () => {
-    const { persisted } = run(REVIEW, "examples/review-customer.sail", { email: "a@b.c", comments: "Blocked" });
+    const { persisted } = run(REVIEW, "examples/review-customer.mn", { email: "a@b.c", comments: "Blocked" });
     expect(persisted).toEqual({ email: "a@b.c", comments: "Needs review" });
   });
 
   it("OR: both false leaves the record untouched", () => {
-    const { customer, persisted } = run(REVIEW, "examples/review-customer.sail", { email: "a@b.c", comments: "Fine" });
+    const { customer, persisted } = run(REVIEW, "examples/review-customer.mn", { email: "a@b.c", comments: "Fine" });
     expect(customer.setValueCalls).toEqual([]);
     expect(customer.saveCount).toBe(0);
     expect(persisted).toBeUndefined();
   });
 
   it("grouping: the parenthesized OR only applies when the email is set", () => {
-    expect(run(READY, "examples/ready-customer.sail", { email: "a@b.c", comments: "New" }).persisted).toEqual({ email: "a@b.c", comments: "Ready" });
-    expect(run(READY, "examples/ready-customer.sail", { email: "a@b.c", comments: "" }).persisted).toEqual({ email: "a@b.c", comments: "Ready" });
-    expect(run(READY, "examples/ready-customer.sail", { email: "", comments: "New" }).persisted).toBeUndefined();
-    expect(run(READY, "examples/ready-customer.sail", { email: "a@b.c", comments: "Old" }).persisted).toBeUndefined();
+    expect(run(READY, "examples/ready-customer.mn", { email: "a@b.c", comments: "New" }).persisted).toEqual({ email: "a@b.c", comments: "Ready" });
+    expect(run(READY, "examples/ready-customer.mn", { email: "a@b.c", comments: "" }).persisted).toEqual({ email: "a@b.c", comments: "Ready" });
+    expect(run(READY, "examples/ready-customer.mn", { email: "", comments: "New" }).persisted).toBeUndefined();
+    expect(run(READY, "examples/ready-customer.mn", { email: "a@b.c", comments: "Old" }).persisted).toBeUndefined();
   });
 
   it("grouping: moving the parentheses changes the result", () => {
@@ -387,19 +387,19 @@ describe("end to end: Boolean composition", () => {
     );
     expect(regrouped).not.toBe(READY);
     // email empty + comments "New": false under the original grouping, true under this one.
-    expect(run(regrouped, "regrouped.sail", { email: "", comments: "New" }).persisted).toEqual({ email: "", comments: "Ready" });
+    expect(run(regrouped, "regrouped.mn", { email: "", comments: "New" }).persisted).toEqual({ email: "", comments: "Ready" });
   });
 
   it("unary not executes natively", () => {
     const source = `scheduled {\n    let customer = load Customer("123")\n    if !(customer.email == "") {\n        customer.comments = "Has email"\n        save customer\n    }\n}\n`;
-    expect(run(source, "not.sail", { email: "a@b.c", comments: "" }).persisted).toEqual({ email: "a@b.c", comments: "Has email" });
-    expect(run(source, "not.sail", { email: "", comments: "" }).persisted).toBeUndefined();
+    expect(run(source, "not.mn", { email: "a@b.c", comments: "" }).persisted).toEqual({ email: "a@b.c", comments: "Has email" });
+    expect(run(source, "not.mn", { email: "", comments: "" }).persisted).toBeUndefined();
   });
 
   it("logical operators short-circuit in the generated code", () => {
     // The right operand reads a field; with a throwing getValue, a non-short-circuit && would fail.
     const source = `scheduled {\n    let customer = load Customer("123")\n    if customer.email == "x" && customer.comments == "y" {\n        save customer\n    }\n}\n`;
-    const result = compileSail(source, "short.sail");
+    const result = compileMynt(source, "short.mn");
     const netsuite = new FakeNetSuite();
     const customer = netsuite.record.seed("customer", "123", { email: "" });
     const reads: string[] = [];
@@ -414,10 +414,10 @@ describe("end to end: Boolean composition", () => {
 });
 
 describe("end to end: create", () => {
-  const CREATE = readFileSync(new URL("../examples/create-customer.sail", import.meta.url), "utf8");
+  const CREATE = readFileSync(new URL("../examples/create-customer.mn", import.meta.url), "utf8");
 
   it("compiles the create example to the expected SuiteScript with N/record once", () => {
-    const result = compileSail(CREATE, "examples/create-customer.sail");
+    const result = compileMynt(CREATE, "examples/create-customer.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     expect(result.output).toMatchSnapshot();
@@ -426,21 +426,21 @@ describe("end to end: create", () => {
   });
 
   it("creates, writes, and persists a new Customer with an assigned id", () => {
-    const { output } = compileSail(CREATE, "examples/create-customer.sail");
+    const { output } = compileMynt(CREATE, "examples/create-customer.mn");
     const netsuite = new FakeNetSuite();
     netsuite.load(output!).execute!(scheduledContext());
     expect(netsuite.record.createCalls).toEqual([{ type: "customer" }]);
     expect(netsuite.record.loadCalls).toEqual([]);
     const [created] = netsuite.record.created;
-    expect(created!.setValueCalls).toEqual([{ fieldId: "comments", value: "Created by Sail" }]);
+    expect(created!.setValueCalls).toEqual([{ fieldId: "comments", value: "Created by Mynt" }]);
     expect(created!.saveCount).toBe(1);
     expect(created!.id).toBe("1000");
-    expect(netsuite.record.persisted("customer", "1000")).toEqual({ comments: "Created by Sail" });
+    expect(netsuite.record.persisted("customer", "1000")).toEqual({ comments: "Created by Mynt" });
   });
 
   it("a created record that is never saved is not persisted", () => {
-    const result = compileSail(`scheduled {\n    let c = create Customer\n    c.comments = "x"\n}\n`);
-    expect(result.diagnostics.map((d) => d.code)).toEqual(["SAIL2001"]);
+    const result = compileMynt(`scheduled {\n    let c = create Customer\n    c.comments = "x"\n}\n`);
+    expect(result.diagnostics.map((d) => d.code)).toEqual(["MYNT2001"]);
     const netsuite = new FakeNetSuite();
     netsuite.load(result.output!).execute!(scheduledContext());
     const [created] = netsuite.record.created;
@@ -449,28 +449,28 @@ describe("end to end: create", () => {
   });
 
   it("creates a custom record by its script id", () => {
-    const result = compileSail(`scheduled {\n    let entry = create SailLog\n    entry.custrecord_sail_message = "hello"\n    save entry\n}\n`);
+    const result = compileMynt(`scheduled {\n    let entry = create MyntLog\n    entry.custrecord_mynt_message = "hello"\n    save entry\n}\n`);
     expect(result.diagnostics).toEqual([]);
-    expect(result.output).toContain('record.create({\n            type: "customrecord_sail_log"\n        });');
+    expect(result.output).toContain('record.create({\n            type: "customrecord_mynt_log"\n        });');
     const netsuite = new FakeNetSuite();
     netsuite.load(result.output!).execute!(scheduledContext());
-    expect(netsuite.record.persisted("customrecord_sail_log", "1000")).toEqual({ custrecord_sail_message: "hello" });
+    expect(netsuite.record.persisted("customrecord_mynt_log", "1000")).toEqual({ custrecord_mynt_message: "hello" });
   });
 
   it("a user event can create and save an owned record while NetSuite saves the context record", () => {
-    const result = compileSail(`afterSubmit edit (customer: Customer) {\n    let entry = create SailLog\n    entry.custrecord_sail_message = customer.email\n    save entry\n}\n`);
+    const result = compileMynt(`afterSubmit edit (customer: Customer) {\n    let entry = create MyntLog\n    entry.custrecord_mynt_message = customer.email\n    save entry\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const netsuite = new FakeNetSuite();
     const customer = new FakeRecord("customer", { email: "a@b.c" }, "5");
     netsuite.load(result.output!).afterSubmit!(userEventContext("edit", customer));
     expect(customer.saveCount).toBe(0);
-    expect(netsuite.record.persisted("customrecord_sail_log", "1000")).toEqual({ custrecord_sail_message: "a@b.c" });
+    expect(netsuite.record.persisted("customrecord_mynt_log", "1000")).toEqual({ custrecord_mynt_message: "a@b.c" });
   });
 });
 
 describe("end to end: delete, copy, transform", () => {
   function run(source: string, seed: (netsuite: FakeNetSuite) => void) {
-    const result = compileSail(source, "lifecycle.sail");
+    const result = compileMynt(source, "lifecycle.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     const netsuite = new FakeNetSuite();
@@ -498,7 +498,7 @@ describe("end to end: delete, copy, transform", () => {
   });
 
   it("the fake runtime refuses to delete an unknown id", () => {
-    const result = compileSail(`scheduled {\n    let c = load Customer("9")\n    delete c\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer("9")\n    delete c\n}\n`);
     const netsuite = new FakeNetSuite();
     netsuite.record.seed("customer", "9", {});
     const entry = netsuite.load(result.output!);
@@ -516,8 +516,8 @@ describe("end to end: delete, copy, transform", () => {
     expect(netsuite.record.persisted("customer", "1000")).toEqual({ email: "a@b.c", comments: "copied" });
     expect(netsuite.record.load({ type: "customer", id: "1" }).getValue({ fieldId: "comments" })).toBe("original");
 
-    const unsaved = compileSail(`scheduled {\n    let dup = copy Customer("1")\n    dup.comments = "x"\n}\n`);
-    expect(unsaved.diagnostics.map((d) => d.code)).toEqual(["SAIL2001"]);
+    const unsaved = compileMynt(`scheduled {\n    let dup = copy Customer("1")\n    dup.comments = "x"\n}\n`);
+    expect(unsaved.diagnostics.map((d) => d.code)).toEqual(["MYNT2001"]);
     const ns = new FakeNetSuite();
     ns.record.seed("customer", "1", { email: "a@b.c" });
     ns.load(unsaved.output!).execute!(scheduledContext());
@@ -536,16 +536,16 @@ describe("end to end: delete, copy, transform", () => {
   });
 
   it("copies a custom record by script id", () => {
-    const { output, netsuite } = run(`scheduled {\n    let entry = copy SailLog("3")\n    save entry\n}\n`, (ns) => {
-      ns.record.seed("customrecord_sail_log", "3", { name: "n" });
+    const { output, netsuite } = run(`scheduled {\n    let entry = copy MyntLog("3")\n    save entry\n}\n`, (ns) => {
+      ns.record.seed("customrecord_mynt_log", "3", { name: "n" });
     });
-    expect(output).toContain('type: "customrecord_sail_log"');
-    expect(netsuite.record.persisted("customrecord_sail_log", "1000")).toEqual({ name: "n" });
+    expect(output).toContain('type: "customrecord_mynt_log"');
+    expect(netsuite.record.persisted("customrecord_mynt_log", "1000")).toEqual({ name: "n" });
   });
 });
 
 describe("end to end: query and iterate", () => {
-  const REVIEW = readFileSync(new URL("../examples/review-customers.sail", import.meta.url), "utf8");
+  const REVIEW = readFileSync(new URL("../examples/review-customers.mn", import.meta.url), "utf8");
 
   function seeded() {
     const netsuite = new FakeNetSuite();
@@ -557,46 +557,46 @@ describe("end to end: query and iterate", () => {
   }
 
   it("compiles the flagship example with N/query and N/record once each, and parses", () => {
-    const result = compileSail(REVIEW, "examples/review-customers.sail");
+    const result = compileMynt(REVIEW, "examples/review-customers.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     expect(result.output).toMatchSnapshot();
     expect(result.output).toContain('define(["N/query", "N/record"], (query, record$) => {');
-    expect(result.output).toContain('sail$query(query.Type.CUSTOMER, ["id"], (q) =>');
+    expect(result.output).toContain('mynt$query(query.Type.CUSTOMER, ["id"], (q) =>');
     expect(result.output).toContain("operator: query.Operator.EMPTY_NOT");
   });
 
   it("reviews exactly the customers that have an email and empty comments", () => {
-    const { output } = compileSail(REVIEW, "examples/review-customers.sail");
+    const { output } = compileMynt(REVIEW, "examples/review-customers.mn");
     const netsuite = seeded();
     netsuite.load(output!).execute!(scheduledContext());
     expect(netsuite.query.runs).toEqual([{ type: "customer", columns: ["id"], sort: ["id"] }]);
     expect(netsuite.record.loadCalls.map((c) => c.id)).toEqual(["1", "3", "4"]);
     const comments = (id: string) => netsuite.record.load({ type: "customer", id }).getValue({ fieldId: "comments" });
-    expect([comments("1"), comments("2"), comments("3"), comments("4")]).toEqual(["Reviewed by Sail", "", "Already", "Reviewed by Sail"]);
-    expect(netsuite.record.persisted("customer", "1")).toEqual({ email: "a@x.com", comments: "Reviewed by Sail" });
+    expect([comments("1"), comments("2"), comments("3"), comments("4")]).toEqual(["Reviewed by Mynt", "", "Already", "Reviewed by Mynt"]);
+    expect(netsuite.record.persisted("customer", "1")).toEqual({ email: "a@x.com", comments: "Reviewed by Mynt" });
     expect(netsuite.record.persisted("customer", "2")).toBeUndefined();
   });
 
   it("filters by Text, Bool, and compound conditions, reads row fields, and only fetches referenced columns", () => {
-    const source = `scheduled {\n    let logs = query SailLog\n        where custrecord_sail_done && name != "skip"\n    for entry in logs {\n        log.debug(entry.custrecord_sail_message)\n    }\n    for entry in logs {\n        log.debug(entry.id)\n    }\n}\n`;
-    const result = compileSail(source);
+    const source = `scheduled {\n    let logs = query MyntLog\n        where custrecord_mynt_done && name != "skip"\n    for entry in logs {\n        log.debug(entry.custrecord_mynt_message)\n    }\n    for entry in logs {\n        log.debug(entry.id)\n    }\n}\n`;
+    const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     const netsuite = new FakeNetSuite();
-    netsuite.record.seed("customrecord_sail_log", "10", { name: "a", custrecord_sail_done: true, custrecord_sail_message: "first" });
-    netsuite.record.seed("customrecord_sail_log", "11", { name: "skip", custrecord_sail_done: true, custrecord_sail_message: "second" });
-    netsuite.record.seed("customrecord_sail_log", "12", { name: "c", custrecord_sail_done: false, custrecord_sail_message: "third" });
-    netsuite.record.seed("customrecord_sail_log", "13", { name: "d", custrecord_sail_done: true, custrecord_sail_message: "fourth" });
+    netsuite.record.seed("customrecord_mynt_log", "10", { name: "a", custrecord_mynt_done: true, custrecord_mynt_message: "first" });
+    netsuite.record.seed("customrecord_mynt_log", "11", { name: "skip", custrecord_mynt_done: true, custrecord_mynt_message: "second" });
+    netsuite.record.seed("customrecord_mynt_log", "12", { name: "c", custrecord_mynt_done: false, custrecord_mynt_message: "third" });
+    netsuite.record.seed("customrecord_mynt_log", "13", { name: "d", custrecord_mynt_done: true, custrecord_mynt_message: "fourth" });
     netsuite.load(result.output!).execute!(scheduledContext());
-    expect(netsuite.query.runs).toEqual([{ type: "customrecord_sail_log", columns: ["id", "custrecord_sail_message"], sort: ["id"] }]);
+    expect(netsuite.query.runs).toEqual([{ type: "customrecord_mynt_log", columns: ["id", "custrecord_mynt_message"], sort: ["id"] }]);
     expect(netsuite.log.calls.map((c) => c.details)).toEqual(["first", "fourth", "10", "13"]);
     expect(netsuite.record.created).toEqual([]);
     expect(netsuite.record.deleteCalls).toEqual([]);
   });
 
   it("compares numbers, uses captured locals, and pages through large results", () => {
-    const result = compileSail(`scheduled {\n    let floor = 50\n    for o in query SalesOrder where total >= floor {\n        log.debug(o.memo)\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let floor = 50\n    for o in query SalesOrder where total >= floor {\n        log.debug(o.memo)\n    }\n}\n`);
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain("values: [floor]");
     const netsuite = new FakeNetSuite();
@@ -607,7 +607,7 @@ describe("end to end: query and iterate", () => {
   });
 
   it("a query with no matches runs the loop zero times", () => {
-    const result = compileSail(`scheduled {\n    for c in query Customer where email == "nobody" {\n        let x = create Customer\n        save x\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    for c in query Customer where email == "nobody" {\n        let x = create Customer\n        save x\n    }\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const netsuite = seeded();
     netsuite.load(result.output!).execute!(scheduledContext());
@@ -616,7 +616,7 @@ describe("end to end: query and iterate", () => {
 });
 
 describe("end to end: sublists", () => {
-  const FIX = readFileSync(new URL("../examples/fix-quantities.sail", import.meta.url), "utf8");
+  const FIX = readFileSync(new URL("../examples/fix-quantities.mn", import.meta.url), "utf8");
   const LINES = {
     item: [
       { item: "100", quantity: 2, rate: 10, amount: 20, description: "Widget" },
@@ -626,7 +626,7 @@ describe("end to end: sublists", () => {
   };
 
   it("compiles the flagship example, parses, and crosses query, load, lines, and save", () => {
-    const result = compileSail(FIX, "examples/fix-quantities.sail");
+    const result = compileMynt(FIX, "examples/fix-quantities.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     expect(result.output).toMatchSnapshot();
@@ -652,8 +652,8 @@ describe("end to end: sublists", () => {
   });
 
   it("reads line fields by index and leaves changes unsaved until the parent saves", () => {
-    const result = compileSail(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        log.debug(line.description)\n        line.rate = 1\n    }\n}\n`);
-    expect(result.diagnostics.map((d) => d.code)).toEqual(["SAIL2001"]);
+    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        log.debug(line.description)\n        line.rate = 1\n    }\n}\n`);
+    expect(result.diagnostics.map((d) => d.code)).toEqual(["MYNT2001"]);
     expect(result.output).toContain('order.getSublistValue({\n                    sublistId: "item",\n                    fieldId: "description",\n                    line: line$index\n                })');
     const netsuite = new FakeNetSuite();
     const order = netsuite.record.seed("salesorder", "1", {}, LINES);
@@ -665,7 +665,7 @@ describe("end to end: sublists", () => {
   });
 
   it("a transform target carries lines and persists line edits with the new record", () => {
-    const result = compileSail(`scheduled {\n    let inv = transform SalesOrder("1") to Invoice\n    for line in inv.item {\n        line.description = "Billed"\n    }\n    save inv\n}\n`);
+    const result = compileMynt(`scheduled {\n    let inv = transform SalesOrder("1") to Invoice\n    for line in inv.item {\n        line.description = "Billed"\n    }\n    save inv\n}\n`);
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain("inv.setSublistValue({");
     const netsuite = new FakeNetSuite();
@@ -677,7 +677,7 @@ describe("end to end: sublists", () => {
   });
 
   it("a created record iterates zero lines", () => {
-    const result = compileSail(`scheduled {\n    let fresh = create SalesOrder\n    for line in fresh.item {\n        line.rate = 5\n    }\n    save fresh\n}\n`);
+    const result = compileMynt(`scheduled {\n    let fresh = create SalesOrder\n    for line in fresh.item {\n        line.rate = 5\n    }\n    save fresh\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const netsuite = new FakeNetSuite();
     netsuite.load(result.output!).execute!(scheduledContext());
@@ -687,11 +687,11 @@ describe("end to end: sublists", () => {
 });
 
 describe("end to end: add and remove lines", () => {
-  const BUILD = readFileSync(new URL("../examples/build-order.sail", import.meta.url), "utf8");
-  const CLEAN = readFileSync(new URL("../examples/clean-order.sail", import.meta.url), "utf8");
+  const BUILD = readFileSync(new URL("../examples/build-order.mn", import.meta.url), "utf8");
+  const CLEAN = readFileSync(new URL("../examples/clean-order.mn", import.meta.url), "utf8");
 
   it("constructs a sales order with two lines and persists them on save", () => {
-    const result = compileSail(BUILD, "examples/build-order.sail");
+    const result = compileMynt(BUILD, "examples/build-order.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     expect(result.output).toMatchSnapshot();
@@ -710,7 +710,7 @@ describe("end to end: add and remove lines", () => {
   });
 
   it("removes exactly the zero-quantity lines, including adjacent ones, in forward order", () => {
-    const result = compileSail(CLEAN, "examples/clean-order.sail");
+    const result = compileMynt(CLEAN, "examples/clean-order.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     expect(result.output).toMatchSnapshot();
@@ -737,8 +737,8 @@ describe("end to end: add and remove lines", () => {
   });
 
   it("unsaved adds and removes stay in memory", () => {
-    const result = compileSail(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        remove line\n    }\n    add order.item {\n        item = "new"\n    }\n}\n`);
-    expect(result.diagnostics.map((d) => d.code)).toEqual(["SAIL2001", "SAIL2001"]);
+    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        remove line\n    }\n    add order.item {\n        item = "new"\n    }\n}\n`);
+    expect(result.diagnostics.map((d) => d.code)).toEqual(["MYNT2001", "MYNT2001"]);
     const netsuite = new FakeNetSuite();
     const order = netsuite.record.seed("salesorder", "1", {}, { item: [{ item: "old" }] });
     order.save();
@@ -749,7 +749,7 @@ describe("end to end: add and remove lines", () => {
   });
 
   it("adds lines to a copy using locals as values, and the while-form loop reads fields after a removal correctly", () => {
-    const result = compileSail(
+    const result = compileMynt(
       `scheduled {\n    let qty = 4\n    let order = copy SalesOrder("1")\n    add order.item {\n        item = "x"\n        quantity = qty\n    }\n    for line in order.item {\n        if line.item == "drop" {\n            remove line\n        } else {\n            line.description = line.item\n        }\n    }\n    save order\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
@@ -765,10 +765,10 @@ describe("end to end: add and remove lines", () => {
 });
 
 describe("end to end: functions", () => {
-  const REVIEW = readFileSync(new URL("../examples/review-orders.sail", import.meta.url), "utf8");
+  const REVIEW = readFileSync(new URL("../examples/review-orders.mn", import.meta.url), "utf8");
 
   it("compiles the flagship example to plain functions and runs it", () => {
-    const result = compileSail(REVIEW, "examples/review-orders.sail");
+    const result = compileMynt(REVIEW, "examples/review-orders.mn");
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
     expect(result.output).toMatchSnapshot();
@@ -780,13 +780,13 @@ describe("end to end: functions", () => {
     netsuite.record.seed("salesorder", "3", { memo: "TBD" });
     netsuite.load(result.output!).execute!(scheduledContext());
     const memo = (id: string) => netsuite.record.load({ type: "salesorder", id }).getValue({ fieldId: "memo" });
-    expect([memo("1"), memo("2"), memo("3")]).toEqual(["Reviewed by Sail", "Keep", "Reviewed by Sail"]);
+    expect([memo("1"), memo("2"), memo("3")]).toEqual(["Reviewed by Mynt", "Keep", "Reviewed by Mynt"]);
     expect(netsuite.record.load({ type: "salesorder", id: "1" }).persistedLines!.item!.map((l) => l.item)).toEqual(["b"]);
     expect(netsuite.record.load({ type: "salesorder", id: "2" }).persistedLines!.item).toEqual([]);
   });
 
   it("functions can save, call each other, return values, and use names the backend must rename", () => {
-    const result = compileSail(
+    const result = compileMynt(
       `fn label(record: Customer) -> Text {\n    return record.email\n}\nfn stamp(record: Customer, note: Text) {\n    record.comments = note\n    save record\n}\nscheduled {\n    let record = load Customer("1")\n    stamp(record, label(record))\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);

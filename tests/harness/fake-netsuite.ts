@@ -263,7 +263,7 @@ type FakeCondition =
   | { kind: "and" | "or"; operands: FakeCondition[] }
   | { kind: "not"; operand: FakeCondition };
 
-/** One query under construction, with exactly the surface Sail emits. */
+/** One query under construction, with exactly the surface Mynt emits. */
 export class FakeQuery {
   columns: { fieldId: string; alias: string }[] = [];
   condition: FakeCondition | undefined;
@@ -310,7 +310,7 @@ export class FakeQuery {
   }
 }
 
-/** Fake `N/query`: evaluates the conditions Sail emits against the record store. Querying never mutates anything. */
+/** Fake `N/query`: evaluates the conditions Mynt emits against the record store. Querying never mutates anything. */
 export class FakeQueryModule {
   readonly Type = { CUSTOMER: "customer", SALES_ORDER: "salesorder", INVOICE: "invoice" } as const;
   readonly Operator = {

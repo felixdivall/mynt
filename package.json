@@ -1,17 +1,41 @@
 {
-  "name": "sail",
+  "name": "mynt",
   "version": "0.0.1",
-  "description": "Sail: a semantic source language that compiles to SuiteScript 2.1",
+  "description": "Mynt: a semantic source language that compiles to SuiteScript 2.1",
+  "license": "UNLICENSED",
   "type": "module",
-  "private": true,
   "bin": {
-    "sail": "./bin/sail.js"
+    "mynt": "./bin/mynt.js"
   },
+  "files": [
+    "bin",
+    "dist",
+    "schemas",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "netsuite",
+    "suitescript",
+    "compiler",
+    "language",
+    "lsp"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "sail": "tsx src/cli/main.ts"
+    "mynt": "tsx src/cli/main.ts",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "vscode-languageserver": "^10.1.2",
+    "vscode-languageserver-textdocument": "^1.0.15"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
@@ -20,9 +44,5 @@
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   },
-  "packageManager": "pnpm@9.15.9+sha512.68046141893c66fad01c079231128e9afb89ef87e2691d69e4d40eee228988295fd4682181bae55b58418c3a253bde65a505ec7c5f9403ece5cc3cd37dcf2531",
-  "dependencies": {
-    "vscode-languageserver": "^10.1.2",
-    "vscode-languageserver-textdocument": "^1.0.15"
-  }
+  "packageManager": "pnpm@9.15.9+sha512.68046141893c66fad01c079231128e9afb89ef87e2691d69e4d40eee228988295fd4682181bae55b58418c3a253bde65a505ec7c5f9403ece5cc3cd37dcf2531"
 }

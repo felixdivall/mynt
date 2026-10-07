@@ -1,7 +1,7 @@
 scheduled {
     let customer = create Customer
 
-    customer.comments = "Created by Sail"
+    customer.comments = "Created by Mynt"
 
     save customer
 }

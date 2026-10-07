@@ -4,8 +4,8 @@ import type { CliContext } from "../context.js";
 import { resolveAlias } from "./account.js";
 
 const USAGE = `Usage:
-  sail auth login [alias]
-  sail auth logout [alias]
+  mynt auth login [alias]
+  mynt auth logout [alias]
 `;
 
 export async function runAuth(args: ParsedArgs, context: CliContext): Promise<number> {
@@ -15,7 +15,7 @@ export async function runAuth(args: ParsedArgs, context: CliContext): Promise<nu
 
   if (sub === "logout") {
     const removed = await context.credentialStore.delete(alias);
-    context.stdout(removed ? `sail: logged out of '${alias}'.\n` : `sail: '${alias}' was not logged in.\n`);
+    context.stdout(removed ? `mynt: logged out of '${alias}'.\n` : `mynt: '${alias}' was not logged in.\n`);
     return 0;
   }
 
@@ -37,7 +37,7 @@ export async function runAuth(args: ParsedArgs, context: CliContext): Promise<nu
 
   await context.credentialStore.set(alias, credentials);
   const role = callback.role ? ` with role ${callback.role}` : "";
-  context.stdout(`sail: logged in to '${alias}' (${profile.accountId})${role}. Tokens stored in the ${context.credentialStore.description}.\n`);
-  if (context.credentialStore.warning) context.stderr(`sail: warning: ${context.credentialStore.warning}\n`);
+  context.stdout(`mynt: logged in to '${alias}' (${profile.accountId})${role}. Tokens stored in the ${context.credentialStore.description}.\n`);
+  if (context.credentialStore.warning) context.stderr(`mynt: warning: ${context.credentialStore.warning}\n`);
   return 0;
 }

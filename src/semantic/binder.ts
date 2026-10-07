@@ -72,7 +72,7 @@ import {
   typeName,
   type LineType,
   type RecordType,
-  type SailType,
+  type MyntType,
 } from "./types.js";
 import type { FieldType } from "../schema/types.js";
 
@@ -99,7 +99,7 @@ export function bind(
  * type-argument positions can see through them.
  */
 type Denotation =
-  | { kind: "value"; type: SailType; bound: BoundExpression }
+  | { kind: "value"; type: MyntType; bound: BoundExpression }
   | { kind: "recordType"; record: RecordSchema }
   | { kind: "namespace"; namespace: BuiltinNamespace; span: Span }
   | { kind: "builtin"; builtin: Builtin; reference: BuiltinReference }
@@ -125,7 +125,7 @@ class Scope {
     /** Inside a sublist loop body: the line being iterated. */
     readonly iterating?: LineBinding,
     /** What `return` may carry: a function's declared type, or Void in an entry point. */
-    readonly returns: SailType | "Void" = "Void",
+    readonly returns: MyntType | "Void" = "Void",
     /** The function whose body this scope belongs to, for messages. */
     readonly functionName?: string,
   ) {}
@@ -306,7 +306,7 @@ class Binder {
       if (functionDeclarations.length > 0) {
         this.diagnostics.error(
           DiagnosticCode.MixedScriptKinds,
-          "This file declares functions but no entry point; a Sail file is one script, so add beforeSubmit, afterSubmit, or scheduled",
+          "This file declares functions but no entry point; a Mynt file is one script, so add beforeSubmit, afterSubmit, or scheduled",
           functionDeclarations[0]!.keywordSpan,
         );
       }
@@ -330,7 +330,7 @@ class Binder {
       }
       this.diagnostics.error(
         DiagnosticCode.MixedScriptKinds,
-        `${SCRIPT_KIND_LABEL[kind]} and ${SCRIPT_KIND_LABEL[unitKind]} entry points cannot exist in the same Sail script: ` +
+        `${SCRIPT_KIND_LABEL[kind]} and ${SCRIPT_KIND_LABEL[unitKind]} entry points cannot exist in the same Mynt script: ` +
           `this file is a ${SCRIPT_KIND_LABEL[unitKind]} script because it starts with '${keywordOf(scriptDeclarations[0]!)}'. ` +
           `Move '${keywordOf(declaration)}' to its own file.`,
         keywordSpanOf(declaration),
@@ -481,7 +481,7 @@ class Binder {
   }
 
   /** Text, Number, Bool, or a record type. Lines, sublists, and query results cannot be parameters. */
-  private resolveParameterType(type: Identifier, functionName: string): SailType | undefined {
+  private resolveParameterType(type: Identifier, functionName: string): MyntType | undefined {
     const value = this.resolveValueTypeName(type.name);
     if (value) return value;
     const record = this.schema.getRecordByName(type.name);
@@ -1059,7 +1059,7 @@ class Binder {
   }
 
   /** What a `for` variable is: a query row for a Sequence, a line for a sublist of a named record. */
-  private elementType(iterable: BoundExpression, syntax: Expression): SailType | undefined {
+  private elementType(iterable: BoundExpression, syntax: Expression): MyntType | undefined {
     if (isSequenceType(iterable.type)) return iterable.type.element;
     if (isSublistType(iterable.type)) {
       if (iterable.kind !== "SublistAccess" || iterable.receiver.kind !== "LocalReference") {
@@ -1094,7 +1094,7 @@ class Binder {
       this.diagnostics.error(
         DiagnosticCode.ConditionNotBool,
         `if condition must be Bool, but received ${typeName(condition.type)}. ` +
-          `Sail has no truthiness: compare the value explicitly, for example with == or !=`,
+          `Mynt has no truthiness: compare the value explicitly, for example with == or !=`,
         statement.condition.span,
       );
     }
@@ -1247,7 +1247,7 @@ class Binder {
         this.diagnostics.error(
           DiagnosticCode.LogicalOperandNotBool,
           `operator '${operator}' requires Bool operands, but the ${side} operand is ${typeName(operand.type)}. ` +
-            `Sail has no truthiness: compare the value explicitly, for example with == or !=`,
+            `Mynt has no truthiness: compare the value explicitly, for example with == or !=`,
           syntax.span,
         );
       }
@@ -1272,7 +1272,7 @@ class Binder {
       this.diagnostics.error(
         DiagnosticCode.LogicalOperandNotBool,
         `operator '!' requires Bool, but received ${typeName(operand.type)}. ` +
-          `Sail has no truthiness: compare the value explicitly, for example with == or !=`,
+          `Mynt has no truthiness: compare the value explicitly, for example with == or !=`,
         expression.operand.span,
       );
       return undefined;
@@ -1659,7 +1659,7 @@ class Binder {
 
     // A record operation's result is the subject or target type written in
     // source. It belongs to the script, hence origin "owned".
-    let type: SailType;
+    let type: MyntType;
     if (builtin.kind === "function") type = builtin.returns;
     else type = makeRecordType(builtin.returns === "target" ? targetType!.record : record!, "owned");
 

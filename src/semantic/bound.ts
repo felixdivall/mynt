@@ -1,5 +1,5 @@
 /**
- * Bound program model: the resolved, type-checked form of a Sail file.
+ * Bound program model: the resolved, type-checked form of a Mynt file.
  *
  * This is what the backend consumes. Names are gone; every reference points
  * at a schema object, a local symbol, or a built-in symbol. Every node keeps
@@ -8,7 +8,7 @@
 import type { Span } from "../diagnostics.js";
 import type { FieldSchema, FieldType, RecordSchema, SublistSchema } from "../schema/types.js";
 import type { Builtin, NetSuiteModule } from "./builtins.js";
-import type { SailType, SequenceType, SublistType } from "./types.js";
+import type { MyntType, SequenceType, SublistType } from "./types.js";
 
 export type ScriptUnit = UserEventUnit | ScheduledUnit;
 
@@ -54,7 +54,7 @@ export interface ScheduledUnit extends ScriptUnitBase {
 
 export type UserEventHook = "beforeSubmit" | "afterSubmit";
 
-/** NetSuite `context.UserEventType` members, in Sail spelling. */
+/** NetSuite `context.UserEventType` members, in Mynt spelling. */
 export const USER_EVENT_TYPES = [
   "create",
   "edit",
@@ -84,7 +84,7 @@ export interface ScopedLocal {
 /** A named, typed local: an entry point parameter or a `let` variable. */
 export interface LocalSymbol {
   name: string;
-  type: SailType;
+  type: MyntType;
   origin: "parameter" | "let" | "loop";
   declaredAt: Span;
 }
@@ -154,7 +154,7 @@ export interface FunctionCall {
   function: BoundFunction;
   callee: FunctionReference;
   arguments: BoundExpression[];
-  type: SailType;
+  type: MyntType;
   span: Span;
 }
 
@@ -396,7 +396,7 @@ export interface Comparison {
 export interface LocalReference {
   kind: "LocalReference";
   local: LocalSymbol;
-  type: SailType;
+  type: MyntType;
   span: Span;
 }
 
@@ -433,7 +433,7 @@ export interface RecordTypeReference {
 /**
  * `a && b` / `a || b` on Bool operands. Both are short-circuiting: the right
  * operand is evaluated only when the left one does not decide the result.
- * That is part of Sail's semantics, not an emitter detail, so built-ins
+ * That is part of Mynt's semantics, not an emitter detail, so built-ins
  * with effects may rely on it once they can appear in expressions.
  */
 export interface Logical {
@@ -462,6 +462,6 @@ export interface BuiltinCall {
   /** The record type written after `to`, for operations with a target. */
   targetType: RecordTypeReference | undefined;
   arguments: BoundExpression[];
-  type: SailType;
+  type: MyntType;
   span: Span;
 }

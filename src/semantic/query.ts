@@ -14,7 +14,7 @@ import type { SchemaProvider } from "../schema/provider.js";
 import { checkRecordLifecycle } from "./analysis.js";
 import { bind, resolveName, type NameResolution } from "./binder.js";
 import type { BoundExpression, LocalSymbol, ScriptUnit } from "./bound.js";
-import type { SailType } from "./types.js";
+import type { MyntType } from "./types.js";
 
 export interface SemanticDocument {
   text: string;
@@ -117,7 +117,7 @@ export function expressionAt(doc: SemanticDocument, offset: number): BoundExpres
 }
 
 /** The type of the smallest bound expression containing `offset`. */
-export function typeAt(doc: SemanticDocument, offset: number): SailType | undefined {
+export function typeAt(doc: SemanticDocument, offset: number): MyntType | undefined {
   return expressionAt(doc, offset)?.type;
 }
 

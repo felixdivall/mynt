@@ -94,7 +94,7 @@ export class FileCredentialStore implements CredentialStore {
   }
 }
 
-const KEYCHAIN_SERVICE = "sail-netsuite";
+const KEYCHAIN_SERVICE = "mynt-netsuite";
 
 function run(command: string, args: string[], input?: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -126,7 +126,7 @@ export class KeychainCredentialStore implements CredentialStore {
     // Base64 keeps the secret to one shell-safe token; `security -i` reads the
     // command from stdin so the secret never appears in a process listing.
     const encoded = Buffer.from(JSON.stringify(credentials), "utf8").toString("base64");
-    const command = `add-generic-password -U -s ${KEYCHAIN_SERVICE} -a ${alias} -l "Sail NetSuite login (${alias})" -w ${encoded}\n`;
+    const command = `add-generic-password -U -s ${KEYCHAIN_SERVICE} -a ${alias} -l "Mynt NetSuite login (${alias})" -w ${encoded}\n`;
     const result = await run("security", ["-i"], command);
     if (result.code !== 0) throw new Error(`Could not store credentials in the keychain: ${result.stderr.trim()}`);
   }

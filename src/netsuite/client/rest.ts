@@ -63,7 +63,7 @@ export function translateError(status: number, body: string, what: string, accou
   const make = (message: string) => new NetSuiteHttpError(status, message, details);
   switch (status) {
     case 401:
-      return make(`Could not authenticate to NetSuite account '${accountId}'. Run \`sail auth login\` again.`);
+      return make(`Could not authenticate to NetSuite account '${accountId}'. Run \`mynt auth login\` again.`);
     case 403:
       return make(`${what} could not be retrieved because the selected role does not have access.`);
     case 404:

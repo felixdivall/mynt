@@ -25,5 +25,5 @@ export function describeLocal(local: LocalSymbol): string {
 }
 
 export function code(text: string): string {
-  return "```sail\n" + text + "\n```";
+  return "```mynt\n" + text + "\n```";
 }

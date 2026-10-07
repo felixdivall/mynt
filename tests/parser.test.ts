@@ -4,8 +4,8 @@ import { tokenize } from "../src/lexer/lexer.js";
 import { parse } from "../src/parser/parser.js";
 
 function parseSource(source: string) {
-  const diagnostics = new DiagnosticBag("test.sail");
-  const ast = parse(source, "test.sail", diagnostics);
+  const diagnostics = new DiagnosticBag("test.mn");
+  const ast = parse(source, "test.mn", diagnostics);
   return { ast, diagnostics: diagnostics.items };
 }
 
@@ -35,7 +35,7 @@ describe("lexer", () => {
 
 describe("parser", () => {
   it("parses an entry point with an event filter", () => {
-    const { ast, diagnostics } = parseSource(`beforeSubmit create | edit (customer: Customer) {\n    customer.comments = "Managed by Sail"\n}\n`);
+    const { ast, diagnostics } = parseSource(`beforeSubmit create | edit (customer: Customer) {\n    customer.comments = "Managed by Mynt"\n}\n`);
     expect(diagnostics).toEqual([]);
     expect(ast.declarations).toHaveLength(1);
     const decl = ast.declarations[0]!;
@@ -46,7 +46,7 @@ describe("parser", () => {
     expect(decl.body.statements[0]).toMatchObject({
       kind: "AssignmentStatement",
       target: { kind: "MemberExpression", object: { name: "customer" }, property: { name: "comments" } },
-      value: { kind: "StringLiteral", value: "Managed by Sail" },
+      value: { kind: "StringLiteral", value: "Managed by Mynt" },
     });
   });
 
@@ -59,7 +59,7 @@ describe("parser", () => {
   it("reports a located syntax error and recovers at the next entry point", () => {
     const { ast, diagnostics } = parseSource(`beforeSubmit create (customer Customer) {\n}\nafterSubmit create (c: Customer) {\n}\n`);
     expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]!.code).toBe("SAIL0001");
+    expect(diagnostics[0]!.code).toBe("MYNT0001");
     expect(diagnostics[0]!.message).toBe("Expected ':' after the parameter name, found 'Customer'");
     expect(diagnostics[0]!.span.start).toMatchObject({ line: 1, column: 31 });
     expect(ast.declarations.map((d) => d.hook)).toEqual(["afterSubmit"]);
@@ -78,7 +78,7 @@ describe("parser", () => {
 
 describe("parser: scheduled and calls", () => {
   it("parses a scheduled block", () => {
-    const { ast, diagnostics } = parseSource(`scheduled {\n    log.debug("Hello from Sail")\n}\n`);
+    const { ast, diagnostics } = parseSource(`scheduled {\n    log.debug("Hello from Mynt")\n}\n`);
     expect(diagnostics).toEqual([]);
     const decl = ast.declarations[0]!;
     expect(decl.kind).toBe("ScheduledDeclaration");

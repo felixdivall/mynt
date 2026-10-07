@@ -13,9 +13,9 @@
  *      "Log in using OAuth 2.0 Access Tokens" permissions, plus view access
  *      to the records whose metadata is pulled.
  *
- * The client id is then given to `sail account add`. Tokens: the access
+ * The client id is then given to `mynt account add`. Tokens: the access
  * token lives one hour; NetSuite's refresh token for this grant lives seven
- * days, after which `sail auth login` must run again.
+ * days, after which `mynt auth login` must run again.
  *
  * Network access goes through an injected `fetch` so the flow is testable.
  */
@@ -100,17 +100,17 @@ export function waitForCallback(options: {
       const state = url.searchParams.get("state");
       if (error) {
         response.writeHead(200, { "content-type": "text/html" });
-        response.end(CALLBACK_PAGE("Sail: login refused", `NetSuite reported: ${error}. You can close this tab.`));
+        response.end(CALLBACK_PAGE("Mynt: login refused", `NetSuite reported: ${error}. You can close this tab.`));
         finish(() => reject(new UserError(`NetSuite refused the login: ${error}`)));
         return;
       }
       if (!code || state !== options.expectedState) {
         response.writeHead(400, { "content-type": "text/html" });
-        response.end(CALLBACK_PAGE("Sail: unexpected callback", "This callback did not match the login in progress."));
+        response.end(CALLBACK_PAGE("Mynt: unexpected callback", "This callback did not match the login in progress."));
         return;
       }
       response.writeHead(200, { "content-type": "text/html" });
-      response.end(CALLBACK_PAGE("Sail: logged in", "You can close this tab and return to the terminal."));
+      response.end(CALLBACK_PAGE("Mynt: logged in", "You can close this tab and return to the terminal."));
       finish(() =>
         resolve({
           code,
@@ -134,7 +134,7 @@ export function waitForCallback(options: {
     server.on("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timer);
       if (error.code === "EADDRINUSE") {
-        reject(new UserError(`Port ${options.port} is in use. Sail needs it for the login redirect; free it or configure another port with \`sail account add\`.`));
+        reject(new UserError(`Port ${options.port} is in use. Mynt needs it for the login redirect; free it or configure another port with \`mynt account add\`.`));
       } else {
         reject(error);
       }

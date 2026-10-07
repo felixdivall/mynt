@@ -1,5 +1,5 @@
 /**
- * Raw REST metadata -> Sail SchemaDocument.
+ * Raw REST metadata -> Mynt SchemaDocument.
  *
  * Every mapping decision is made here and nowhere else, so the compiler
  * never sees NetSuite's shape and a change in what NetSuite reports is a
@@ -38,8 +38,8 @@ export function normalize(raw: RawMetadata, options: NormalizeOptions): Normaliz
   const warnings: string[] = [];
   const restTypes = Object.keys(raw.records).sort();
 
-  // Sail names first, so reference targets can be resolved by REST type name.
-  const names = assignSailNames(restTypes, warnings);
+  // Mynt names first, so reference targets can be resolved by REST type name.
+  const names = assignMyntNames(restTypes, warnings);
 
   const records: Record<string, SchemaDocumentRecord> = {};
   for (const restType of restTypes) {
@@ -49,7 +49,7 @@ export function normalize(raw: RawMetadata, options: NormalizeOptions): Normaliz
 
   return {
     document: {
-      sailSchemaVersion: 1,
+      myntSchemaVersion: 1,
       source: { kind: "account", platform: "netsuite", account: options.account, pulledAt: options.pulledAt },
       records,
     },
@@ -70,18 +70,18 @@ export function isCustomRecord(restType: string): boolean {
 }
 
 /**
- * Sail record names: `salesOrder` -> `SalesOrder`; `customrecord_sail_test`
- * -> `SailTest`. These are Sail's own names, not NetSuite identifiers. A
- * collision falls back to the full id (`CustomrecordSailTest`).
+ * Mynt record names: `salesOrder` -> `SalesOrder`; `customrecord_mynt_test`
+ * -> `MyntTest`. These are Mynt's own names, not NetSuite identifiers. A
+ * collision falls back to the full id (`CustomrecordMyntTest`).
  */
-function assignSailNames(restTypes: string[], warnings: string[]): Map<string, string> {
+function assignMyntNames(restTypes: string[], warnings: string[]): Map<string, string> {
   const names = new Map<string, string>();
   const taken = new Set<string>();
   for (const restType of restTypes) {
     let name = isCustomRecord(restType) ? pascalCase(restType.replace(CUSTOM_RECORD_PREFIX, "")) : capitalize(restType);
     if (!name || taken.has(name)) {
       const fallback = pascalCase(restType);
-      warnings.push(`Record '${restType}' is named '${fallback}' in Sail because '${name || "(empty)"}' is taken or empty.`);
+      warnings.push(`Record '${restType}' is named '${fallback}' in Mynt because '${name || "(empty)"}' is taken or empty.`);
       name = fallback;
     }
     taken.add(name);
@@ -217,7 +217,7 @@ function pascalCase(text: string): string {
     .join("");
 }
 
-/** Sanity check used by tests and the pull command: every field type is one Sail knows. */
+/** Sanity check used by tests and the pull command: every field type is one Mynt knows. */
 export function assertKnownTypes(document: SchemaDocument): void {
   for (const [recordId, record] of Object.entries(document.records)) {
     for (const [fieldId, field] of Object.entries(record.fields)) {

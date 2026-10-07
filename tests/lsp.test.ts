@@ -9,7 +9,7 @@ import { hoverAt } from "../src/lsp/hover.js";
 import { definitionAt, documentOutline } from "../src/lsp/navigation.js";
 import { LineIndex } from "../src/lsp/position.js";
 import { ProjectRegistry } from "../src/lsp/project.js";
-import { SailLanguageService } from "../src/lsp/service.js";
+import { MyntLanguageService } from "../src/lsp/service.js";
 import { serializeSnapshot } from "../src/netsuite/schema/snapshot.js";
 import { analyze, expressionAt, expressionEndingAt, nodeAt, resolveNameAt, typeAt } from "../src/semantic/query.js";
 import { typeName } from "../src/semantic/types.js";
@@ -21,7 +21,7 @@ function at(source: string) {
   const offset = source.indexOf("§");
   if (offset < 0) throw new Error("no cursor");
   const text = source.slice(0, offset) + source.slice(offset + 1);
-  return { doc: analyze(text, "test.sail", schema), offset, text };
+  return { doc: analyze(text, "test.mn", schema), offset, text };
 }
 
 function labels(source: string): string[] {
@@ -59,8 +59,8 @@ describe("lsp: positions", () => {
   it("counts UTF-16 code units, which is what both the compiler and LSP use", () => {
     const text = `scheduled {\n    log.debug("😀 héllo")\n    customer.x = "y"\n}\n`;
     const lines = new LineIndex(text);
-    const doc = analyze(text, "t.sail", schema);
-    const unknown = doc.diagnostics.find((d) => d.code === "SAIL1010")!;
+    const doc = analyze(text, "t.mn", schema);
+    const unknown = doc.diagnostics.find((d) => d.code === "MYNT1010")!;
     expect(lines.rangeOf(unknown.span)).toEqual({ start: { line: 2, character: 4 }, end: { line: 2, character: 12 } });
     // The emoji is two code units; a span after it on the same line reflects that.
     const emojiLine = text.split("\n")[1]!;
@@ -78,45 +78,45 @@ describe("lsp: positions", () => {
 
 describe("lsp: diagnostics", () => {
   function service(text: string) {
-    const svc = new SailLanguageService(new ProjectRegistry(() => schema));
-    svc.open("untitled:t.sail", text, 1);
+    const svc = new MyntLanguageService(new ProjectRegistry(() => schema));
+    svc.open("untitled:t.mn", text, 1);
     return svc;
   }
 
   it("maps an unknown field to its exact range with the compiler's message", () => {
     const svc = service(`${UE}    customer.emial = "x"\n}\n`);
-    expect(svc.diagnostics("untitled:t.sail")).toEqual([
+    expect(svc.diagnostics("untitled:t.mn")).toEqual([
       {
         range: { start: { line: 1, character: 13 }, end: { line: 1, character: 18 } },
         severity: 1,
-        code: "SAIL1004",
-        source: "sail",
+        code: "MYNT1004",
+        source: "mynt",
         message: "Customer has no field 'emial'. Did you mean 'email'?",
       },
     ]);
   });
 
   it("maps an unknown record type, a syntax error, and a warning", () => {
-    const record = service(`scheduled {\n    let customer = load Custmer("123")\n}\n`).diagnostics("untitled:t.sail");
-    expect(record[0]).toMatchObject({ code: "SAIL1001", severity: 1, range: { start: { line: 1, character: 24 }, end: { line: 1, character: 31 } } });
+    const record = service(`scheduled {\n    let customer = load Custmer("123")\n}\n`).diagnostics("untitled:t.mn");
+    expect(record[0]).toMatchObject({ code: "MYNT1001", severity: 1, range: { start: { line: 1, character: 24 }, end: { line: 1, character: 31 } } });
     expect(record[0]!.message).toContain("Did you mean 'Customer'?");
 
-    const syntax = service(`scheduled {\n    save\n}\n`).diagnostics("untitled:t.sail");
-    expect(syntax[0]).toMatchObject({ code: "SAIL0001", severity: 1, range: { start: { line: 1, character: 8 }, end: { line: 2, character: 0 } } });
+    const syntax = service(`scheduled {\n    save\n}\n`).diagnostics("untitled:t.mn");
+    expect(syntax[0]).toMatchObject({ code: "MYNT0001", severity: 1, range: { start: { line: 1, character: 8 }, end: { line: 2, character: 0 } } });
     expect(syntax[0]!.message).toBe("Expected a record to save after 'save', found end of statement");
 
-    const warning = service(`scheduled {\n    let c = load Customer("1")\n    c.comments = "x"\n}\n`).diagnostics("untitled:t.sail");
+    const warning = service(`scheduled {\n    let c = load Customer("1")\n    c.comments = "x"\n}\n`).diagnostics("untitled:t.mn");
     expect(warning).toHaveLength(1);
-    expect(warning[0]).toMatchObject({ code: "SAIL2001", severity: 2, range: { start: { line: 2, character: 4 } } });
+    expect(warning[0]).toMatchObject({ code: "MYNT2001", severity: 2, range: { start: { line: 2, character: 4 } } });
   });
 
   it("re-analyzes on change and clears on close", () => {
     const svc = service(`${UE}    customer.emial = "x"\n}\n`);
-    expect(svc.diagnostics("untitled:t.sail")).toHaveLength(1);
-    svc.change("untitled:t.sail", `${UE}    customer.email = "x"\n}\n`, 2);
-    expect(svc.diagnostics("untitled:t.sail")).toEqual([]);
-    svc.close("untitled:t.sail");
-    expect(() => svc.diagnostics("untitled:t.sail")).toThrow("is not open");
+    expect(svc.diagnostics("untitled:t.mn")).toHaveLength(1);
+    svc.change("untitled:t.mn", `${UE}    customer.email = "x"\n}\n`, 2);
+    expect(svc.diagnostics("untitled:t.mn")).toEqual([]);
+    svc.close("untitled:t.mn");
+    expect(() => svc.diagnostics("untitled:t.mn")).toThrow("is not open");
   });
 });
 
@@ -161,8 +161,8 @@ describe("lsp: completion", () => {
   });
 
   it("offers record types from the schema for a parameter type and after load", () => {
-    expect(labels(`beforeSubmit edit (customer: Cus§)`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
-    expect(labels(`scheduled {\n    let customer = load Cus§("123")\n}\n`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
+    expect(labels(`beforeSubmit edit (customer: Cus§)`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let customer = load Cus§("123")\n}\n`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
     const { doc, offset } = at(`scheduled {\n    let c = load §`);
     expect(completionsAt(doc, offset)[0]).toMatchObject({ label: "Customer", detail: "record", documentation: "NetSuite record `customer` · `record.Type.CUSTOMER`" });
   });
@@ -203,16 +203,16 @@ describe("lsp: completion", () => {
   it("shows a custom field from a pulled-style schema", () => {
     const custom = structuredClone(fixtureSchema);
     custom.records.customer!.fields.custentity_tier = { type: "Text", label: "Tier", writable: true, custom: true };
-    const doc = analyze(`${UE}    customer.\n}\n`, "t.sail", new DocumentSchemaProvider(custom));
+    const doc = analyze(`${UE}    customer.\n}\n`, "t.mn", new DocumentSchemaProvider(custom));
     const items = completionsAt(doc, `${UE}    customer.`.length);
     expect(items.find((i) => i.label === "custentity_tier")).toMatchObject({ detail: "Text · writable · custom" });
   });
 
   it("stays useful on incomplete and malformed source", () => {
-    expect(labels(`beforeSubmit edit (customer: Cus§`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
+    expect(labels(`beforeSubmit edit (customer: Cus§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
     expect(labels(`${UE}    customer.§`)).toEqual(["comments", "email", "entityid"]);
     expect(labels(`${UE}    customer.§\n    save customer\n}\n`)).toEqual(["comments", "email", "entityid"]);
-    expect(labels(`scheduled {\n    let c = load Cus§`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let c = load Cus§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
     // A broken statement earlier in the block does not take the parameter out of scope.
     expect(labels(`${UE}    customer.comments = \n    customer. = "x"\n    customer.§\n}\n`)).toEqual(["comments", "email", "entityid"]);
     // A let whose initializer failed is not in scope, but everything else is.
@@ -228,26 +228,26 @@ describe("lsp: completion", () => {
 
 describe("lsp: hover", () => {
   it("describes record types in parameter and load position", () => {
-    expect(hover(`beforeSubmit edit (customer: Cust§omer) {\n}\n`)).toBe("```sail\nrecord Customer\n```\n\nNetSuite record `customer` · `record.Type.CUSTOMER`");
+    expect(hover(`beforeSubmit edit (customer: Cust§omer) {\n}\n`)).toBe("```mynt\nrecord Customer\n```\n\nNetSuite record `customer` · `record.Type.CUSTOMER`");
     expect(hover(`scheduled {\n    let o = load Sales§Order("1")\n}\n`)).toContain("record SalesOrder");
   });
 
   it("describes fields with label, writability, and NetSuite id", () => {
-    expect(hover(`${UE}    customer.comm§ents = "x"\n}\n`)).toBe("```sail\nCustomer.comments: Text\n```\n\nComments · Text · writable · NetSuite field `comments`");
+    expect(hover(`${UE}    customer.comm§ents = "x"\n}\n`)).toBe("```mynt\nCustomer.comments: Text\n```\n\nComments · Text · writable · NetSuite field `comments`");
     expect(hover(`scheduled {\n    let o = load SalesOrder("1")\n    log.debug(o.tot§al)\n}\n`)).toContain("SalesOrder.total: Number\n```\n\nTotal · Number · read-only");
     expect(hover(`scheduled {\n    log.debug(load Customer("1").em§ail)\n}\n`)).toContain("Customer.email: Text");
   });
 
   it("describes locals with their type and origin, at declaration and use", () => {
-    expect(hover(`${UE}    save cust§omer\n}\n`)).toBe("```sail\ncustomer: Customer\n```\n\nparameter · Customer (context record, saved by NetSuite)");
+    expect(hover(`${UE}    save cust§omer\n}\n`)).toBe("```mynt\ncustomer: Customer\n```\n\nparameter · Customer (context record, saved by NetSuite)");
     expect(hover(`beforeSubmit edit (cust§omer: Customer) {\n}\n`)).toContain("parameter · Customer (context record, saved by NetSuite)");
-    expect(hover(`scheduled {\n    let c = load Customer("1")\n    save c§\n}\n`)).toBe("```sail\nc: Customer\n```\n\nlocal · Customer (owned record, persists only through save)");
-    expect(hover(`scheduled {\n    let miss§ing = true\n}\n`)).toBe("```sail\nmissing: Bool\n```\n\nlocal · Bool");
+    expect(hover(`scheduled {\n    let c = load Customer("1")\n    save c§\n}\n`)).toBe("```mynt\nc: Customer\n```\n\nlocal · Customer (owned record, persists only through save)");
+    expect(hover(`scheduled {\n    let miss§ing = true\n}\n`)).toBe("```mynt\nmissing: Bool\n```\n\nlocal · Bool");
   });
 
   it("describes built-ins with signatures", () => {
-    expect(hover(`scheduled {\n    let c = lo§ad Customer("1")\n}\n`)).toBe("```sail\nload T(id: Text) -> T\n```\n\nLoads the existing record with the given internal id. · NetSuite module `N/record`");
-    expect(hover(`scheduled {\n    log.deb§ug("x")\n}\n`)).toBe("```sail\nlog.debug(message: Text) -> Void\n```\n\nWrites a debug entry to the NetSuite execution log. · NetSuite module `N/log`");
+    expect(hover(`scheduled {\n    let c = lo§ad Customer("1")\n}\n`)).toBe("```mynt\nload T(id: Text) -> T\n```\n\nLoads the existing record with the given internal id. · NetSuite module `N/record`");
+    expect(hover(`scheduled {\n    log.deb§ug("x")\n}\n`)).toBe("```mynt\nlog.debug(message: Text) -> Void\n```\n\nWrites a debug entry to the NetSuite execution log. · NetSuite module `N/log`");
     expect(hover(`scheduled {\n    lo§g.debug("x")\n}\n`)).toContain("namespace log");
     expect(hover(`beforeSubmit ed§it (c: Customer) {\n}\n`)).toContain("event edit");
   });
@@ -280,23 +280,23 @@ describe("lsp: navigation", () => {
 
 describe("lsp: project and schema resolution", () => {
   function project(options: { config?: string; snapshot?: boolean }) {
-    const root = mkdtempSync(join(tmpdir(), "sail-lsp-"));
+    const root = mkdtempSync(join(tmpdir(), "mynt-lsp-"));
     mkdirSync(join(root, "src", "deep"), { recursive: true });
-    if (options.config !== undefined) writeFileSync(join(root, "sail.json"), options.config);
+    if (options.config !== undefined) writeFileSync(join(root, "mynt.json"), options.config);
     if (options.snapshot) {
       const custom = structuredClone(fixtureSchema);
       custom.source = { kind: "account", platform: "netsuite", account: "1", pulledAt: "2026-10-07T00:00:00.000Z" };
       custom.records.customer!.fields.custentity_tier = { type: "Text", label: "Tier", writable: true, custom: true };
-      mkdirSync(join(root, ".sail", "schema"), { recursive: true });
-      writeFileSync(join(root, ".sail", "schema", "sandbox.json"), serializeSnapshot(custom));
+      mkdirSync(join(root, ".mynt", "schema"), { recursive: true });
+      writeFileSync(join(root, ".mynt", "schema", "sandbox.json"), serializeSnapshot(custom));
     }
-    const uri = pathToFileURL(join(root, "src", "deep", "x.sail")).toString();
+    const uri = pathToFileURL(join(root, "src", "deep", "x.mn")).toString();
     return { root, uri, registry: new ProjectRegistry(() => schema) };
   }
 
   it("loads the project's snapshot for a file below the root", () => {
     const { uri, registry } = project({ config: `{ "account": "sandbox" }`, snapshot: true });
-    const svc = new SailLanguageService(registry);
+    const svc = new MyntLanguageService(registry);
     svc.open(uri, `${UE}    customer.custentity_tier = "gold"\n}\n`, 1);
     expect(svc.schemaDescription(uri)).toBe("account 'sandbox'");
     expect(svc.diagnostics(uri)).toEqual([]);
@@ -304,30 +304,30 @@ describe("lsp: project and schema resolution", () => {
 
   it("falls back to the built-in sample with a warning when the snapshot is missing", () => {
     const { uri, registry } = project({ config: `{ "account": "sandbox" }` });
-    const svc = new SailLanguageService(registry);
+    const svc = new MyntLanguageService(registry);
     svc.open(uri, `${UE}    customer.custentity_tier = "gold"\n}\n`, 1);
     const diagnostics = svc.diagnostics(uri);
     expect(diagnostics[0]).toMatchObject({
       severity: 2,
       range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
-      message: "No schema snapshot found for account 'sandbox'. Run `sail schema pull sandbox`. Checking against the built-in sample schema until then.",
+      message: "No schema snapshot found for account 'sandbox'. Run `mynt schema pull sandbox`. Checking against the built-in sample schema until then.",
     });
-    expect(diagnostics[1]).toMatchObject({ code: "SAIL1004" });
+    expect(diagnostics[1]).toMatchObject({ code: "MYNT1004" });
   });
 
-  it("uses the built-in sample without a project, survives a broken sail.json, and reloads a changed snapshot", () => {
+  it("uses the built-in sample without a project, survives a broken mynt.json, and reloads a changed snapshot", () => {
     const none = project({});
     expect(none.registry.schemaForUri(none.uri).description).toBe("built-in sample schema");
-    expect(none.registry.schemaForUri("untitled:x.sail").description).toBe("built-in sample schema");
+    expect(none.registry.schemaForUri("untitled:x.mn").description).toBe("built-in sample schema");
 
     const broken = project({ config: "{ not json" });
     expect(broken.registry.schemaForUri(broken.uri)).toMatchObject({ description: "built-in sample schema" });
 
     const { root, uri, registry } = project({ config: `{ "account": "sandbox" }` });
     expect(registry.schemaForUri(uri).problem).toContain("No schema snapshot");
-    mkdirSync(join(root, ".sail", "schema"), { recursive: true });
+    mkdirSync(join(root, ".mynt", "schema"), { recursive: true });
     const snapshot = structuredClone(fixtureSchema);
-    writeFileSync(join(root, ".sail", "schema", "sandbox.json"), serializeSnapshot(snapshot));
+    writeFileSync(join(root, ".mynt", "schema", "sandbox.json"), serializeSnapshot(snapshot));
     expect(registry.schemaForUri(uri).description).toBe("account 'sandbox'");
   });
 });
@@ -366,14 +366,14 @@ describe("lsp: semantic expression queries", () => {
 
 describe("lsp: create and arbitrary receivers", () => {
   it("offers record types after create, complete or not", () => {
-    expect(labels(`scheduled {\n    let c = create §\n}\n`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
-    expect(labels(`scheduled {\n    let c = create Cus§`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let c = create §\n}\n`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let c = create Cus§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
     expect(context(`scheduled {\n    let c = create Cus§`)).toBe("recordType:Cus");
   });
 
   it("completes fields of a created local through the ordinary member path", () => {
     expect(labels(`scheduled {\n    let customer = create Customer\n    customer.§\n}\n`)).toEqual(["comments", "email", "entityid"]);
-    expect(labels(`scheduled {\n    let entry = create SailLog\n    entry.§\n}\n`)).toEqual(["name", "custrecord_sail_message", "custrecord_sail_done"]);
+    expect(labels(`scheduled {\n    let entry = create MyntLog\n    entry.§\n}\n`)).toEqual(["name", "custrecord_mynt_message", "custrecord_mynt_done"]);
   });
 
   it("completes fields of any record-valued expression", () => {
@@ -384,15 +384,15 @@ describe("lsp: create and arbitrary receivers", () => {
   });
 
   it("hovers created locals and the create built-in", () => {
-    expect(hover(`scheduled {\n    let c = create Customer\n    save c§\n}\n`)).toBe("```sail\nc: Customer\n```\n\nlocal · Customer (owned record, persists only through save)");
-    expect(hover(`scheduled {\n    let c = cre§ate Customer\n}\n`)).toBe("```sail\ncreate T -> T\n```\n\nCreates a new, unsaved record of type T. · NetSuite module `N/record`");
+    expect(hover(`scheduled {\n    let c = create Customer\n    save c§\n}\n`)).toBe("```mynt\nc: Customer\n```\n\nlocal · Customer (owned record, persists only through save)");
+    expect(hover(`scheduled {\n    let c = cre§ate Customer\n}\n`)).toBe("```mynt\ncreate T -> T\n```\n\nCreates a new, unsaved record of type T. · NetSuite module `N/record`");
     expect(hover(`scheduled {\n    let c = create Cust§omer\n}\n`)).toContain("record Customer");
   });
 
   it("hovers write targets and reads identically, from the bound model", () => {
     const read = hover(`${UE}    log.debug(customer.comm§ents)\n}\n`);
     const write = hover(`${UE}    customer.comm§ents = "x"\n}\n`);
-    expect(read).toBe("```sail\nCustomer.comments: Text\n```\n\nComments · Text · writable · NetSuite field `comments`");
+    expect(read).toBe("```mynt\nCustomer.comments: Text\n```\n\nComments · Text · writable · NetSuite field `comments`");
     expect(write).toBe(read);
     expect(hover(`${UE}    custo§mer.comments = "x"\n}\n`)).toContain("customer: Customer");
     expect(hover(`${UE}    customer.comments = "x"§\n}\n`)).toBeUndefined();
@@ -401,9 +401,9 @@ describe("lsp: create and arbitrary receivers", () => {
 
 describe("lsp: copy, transform, and delete", () => {
   it("completes record types after copy, after transform, and after to", () => {
-    expect(labels(`scheduled {\n    let c = copy Cus§`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
-    expect(labels(`scheduled {\n    let i = transform Sales§`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
-    expect(labels(`scheduled {\n    let i = transform SalesOrder("123") to Inv§`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let c = copy Cus§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let i = transform Sales§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let i = transform SalesOrder("123") to Inv§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
     expect(context(`scheduled {\n    let i = transform SalesOrder("123") to §`)).toBe("recordType");
   });
 
@@ -414,8 +414,8 @@ describe("lsp: copy, transform, and delete", () => {
   });
 
   it("hovers the operations with their signatures and offers delete as a statement", () => {
-    expect(hover(`scheduled {\n    let d = co§py Customer("1")\n    save d\n}\n`)).toBe("```sail\ncopy T(id: Text) -> T\n```\n\nCreates a new, unsaved copy of the record with the given internal id. · NetSuite module `N/record`");
-    expect(hover(`scheduled {\n    let i = trans§form SalesOrder("1") to Invoice\n    save i\n}\n`)).toContain("```sail\ntransform T(id: Text) to U -> U\n```");
+    expect(hover(`scheduled {\n    let d = co§py Customer("1")\n    save d\n}\n`)).toBe("```mynt\ncopy T(id: Text) -> T\n```\n\nCreates a new, unsaved copy of the record with the given internal id. · NetSuite module `N/record`");
+    expect(hover(`scheduled {\n    let i = trans§form SalesOrder("1") to Invoice\n    save i\n}\n`)).toContain("```mynt\ntransform T(id: Text) to U -> U\n```");
     expect(hover(`scheduled {\n    let i = transform SalesOrder("1") to Inv§oice\n    save i\n}\n`)).toContain("record Invoice");
     expect(labels(`scheduled {\n    let c = load Customer("1")\n    §\n}\n`)).toContain("delete");
     expect(labels(`scheduled {\n    let c = load Customer("1")\n    delete §\n}\n`)).toContain("c");
@@ -424,7 +424,7 @@ describe("lsp: copy, transform, and delete", () => {
 
 describe("lsp: query and loops", () => {
   it("completes record types after query, fields after where, and fields plus id on a loop variable", () => {
-    expect(labels(`scheduled {\n    let c = query Cus§`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let c = query Cus§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
     expect(labels(`scheduled {\n    let c = query Customer where ema§`)).toEqual(["comments", "email", "entityid", "true", "false"]);
     expect(context(`scheduled {\n    let c = query Customer\n        where §`)).toBe("queryField");
     expect(labels(`scheduled {\n    let c = query Customer where email != "" && §`)).toContain("comments");
@@ -435,14 +435,14 @@ describe("lsp: query and loops", () => {
   });
 
   it("hovers a loop variable as a read-only query result, and its id", () => {
-    expect(hover(`scheduled {\n    for row in query Customer {\n        log.debug(ro§w.email)\n    }\n}\n`)).toBe("```sail\nrow: Customer\n```\n\nloop variable · Customer (query result, read-only)");
-    expect(hover(`scheduled {\n    for row in query Customer {\n        log.debug(row.i§d)\n    }\n}\n`)).toBe("```sail\nCustomer.id: Text\n```\n\ninternal id of the record · use it to `load` the record");
+    expect(hover(`scheduled {\n    for row in query Customer {\n        log.debug(ro§w.email)\n    }\n}\n`)).toBe("```mynt\nrow: Customer\n```\n\nloop variable · Customer (query result, read-only)");
+    expect(hover(`scheduled {\n    for row in query Customer {\n        log.debug(row.i§d)\n    }\n}\n`)).toBe("```mynt\nCustomer.id: Text\n```\n\ninternal id of the record · use it to `load` the record");
     expect(hover(`scheduled {\n    let c = query Customer where ema§il != ""\n}\n`)).toContain("Customer.email: Text");
     expect(hover(`scheduled {\n    let c = query Cust§omer\n}\n`)).toContain("record Customer");
   });
 
   it("stays useful while a query or loop is being typed", () => {
-    expect(labels(`scheduled {\n    let c = query Cus§\n}\n`)).toEqual(["Customer", "SalesOrder", "SailLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let c = query Cus§\n}\n`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
     expect(labels(`scheduled {\n    let c = query Customer where ema§\n}\n`)).toContain("email");
     expect(labels(`scheduled {\n    let c = query Customer\n    for row in c {\n        row.§`)).toEqual(["id", "comments", "email", "entityid"]);
   });
@@ -467,13 +467,13 @@ describe("lsp: sublists", () => {
 
   it("hovers the sublist, the line, and a line field", () => {
     expect(hover(`${ORDER}    for line in order.it§em { }\n}\n`)).toBe(
-      "```sail\nitem: sublist of SalesOrder\n```\n\nItems · 5 fields · iterate with `for line in x.item`; lines persist when the SalesOrder is saved",
+      "```mynt\nitem: sublist of SalesOrder\n```\n\nItems · 5 fields · iterate with `for line in x.item`; lines persist when the SalesOrder is saved",
     );
     expect(hover(`${ORDER}    for line in order.item {\n        log.debug(li§ne.description)\n    }\n}\n`)).toBe(
-      "```sail\nline: Line<SalesOrder.item>\n```\n\nloop variable · line of SalesOrder.item (persisted with the parent SalesOrder)",
+      "```mynt\nline: Line<SalesOrder.item>\n```\n\nloop variable · line of SalesOrder.item (persisted with the parent SalesOrder)",
     );
     expect(hover(`${ORDER}    for line in order.item {\n        line.quan§tity = 1\n    }\n    save order\n}\n`)).toBe(
-      "```sail\nSalesOrder.item.quantity: Number\n```\n\nQuantity · Number · writable · NetSuite field `quantity`",
+      "```mynt\nSalesOrder.item.quantity: Number\n```\n\nQuantity · Number · writable · NetSuite field `quantity`",
     );
     expect(hover(`${ORDER}    for line in order.item {\n        log.debug(line.descr§iption)\n    }\n}\n`)).toContain("SalesOrder.item.description: Text");
   });
@@ -506,7 +506,7 @@ describe("lsp: add and remove", () => {
 
   it("hovers initializer fields with the sublist owner, and the sublist in an add", () => {
     expect(hover(`${ORDER}    add order.item {\n        quan§tity = 2\n    }\n    save order\n}\n`)).toBe(
-      "```sail\nSalesOrder.item.quantity: Number\n```\n\nQuantity · Number · writable · NetSuite field `quantity`",
+      "```mynt\nSalesOrder.item.quantity: Number\n```\n\nQuantity · Number · writable · NetSuite field `quantity`",
     );
     expect(hover(`${ORDER}    add order.it§em {\n        quantity = 2\n    }\n    save order\n}\n`)).toContain("item: sublist of SalesOrder");
     expect(hover(`${ORDER}    for line in order.item {\n        remove li§ne\n    }\n    save order\n}\n`)).toContain("line: Line<SalesOrder.item>");
@@ -520,7 +520,7 @@ describe("lsp: functions", () => {
     expect(labels(`${FN}scheduled {\n    let order = load SalesOrder("1")\n    §\n}\n`)).toContain("setMemo");
     expect(labels(`${FN}scheduled {\n    let order = load SalesOrder("1")\n    if §`)).toContain("setMemo");
     expect(labels(`§`)).toContain("fn");
-    expect(labels(`fn f(order: §`)).toEqual(["Text", "Number", "Bool", "Customer", "SalesOrder", "SailLog", "Invoice"]);
+    expect(labels(`fn f(order: §`)).toEqual(["Text", "Number", "Bool", "Customer", "SalesOrder", "MyntLog", "Invoice"]);
     expect(labels(`fn f(order: SalesOrder) -> §`)).toEqual(["Text", "Number", "Bool"]);
     expect(labels(`${FN.replace("    order.memo = memo\n", "    order.§\n")}scheduled { }\n`)).toEqual(["memo", "total", "item"]);
     expect(labels(`${FN.replace("    order.memo = memo\n", "    return §\n")}scheduled { }\n`)).toContain("memo");
@@ -528,11 +528,11 @@ describe("lsp: functions", () => {
 
   it("hovers calls, declarations, and parameters", () => {
     expect(hover(`${FN}scheduled {\n    let order = load SalesOrder("1")\n    set§Memo(order, "x")\n    save order\n}\n`)).toBe(
-      "```sail\nfn setMemo(order: SalesOrder, memo: Text)\n```\n\nrecord parameters: order · what the function does to them is checked at each call",
+      "```mynt\nfn setMemo(order: SalesOrder, memo: Text)\n```\n\nrecord parameters: order · what the function does to them is checked at each call",
     );
     expect(hover(`fn set§Memo(order: SalesOrder, memo: Text) {\n    order.memo = memo\n}\nscheduled { }\n`)).toContain("fn setMemo(order: SalesOrder, memo: Text)");
-    expect(hover(`fn f(or§der: SalesOrder) {\n    order.memo = "x"\n}\nscheduled { }\n`)).toBe("```sail\norder: SalesOrder\n```\n\nparameter · SalesOrder (record parameter; what this function does to it is checked at each call)");
+    expect(hover(`fn f(or§der: SalesOrder) {\n    order.memo = "x"\n}\nscheduled { }\n`)).toBe("```mynt\norder: SalesOrder\n```\n\nparameter · SalesOrder (record parameter; what this function does to it is checked at each call)");
     expect(hover(`fn f(order: SalesOrder) {\n    or§der.memo = "x"\n}\nscheduled { }\n`)).toContain("record parameter");
-    expect(hover(`fn isBig(n: Number) -> Bool {\n    return n > 1\n}\nscheduled {\n    if is§Big(2) { }\n}\n`)).toBe("```sail\nfn isBig(n: Number) -> Bool\n```");
+    expect(hover(`fn isBig(n: Number) -> Bool {\n    return n > 1\n}\nscheduled {\n    if is§Big(2) { }\n}\n`)).toBe("```mynt\nfn isBig(n: Number) -> Bool\n```");
   });
 });

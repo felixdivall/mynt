@@ -25,7 +25,7 @@ export function createSession(options: {
     async accessToken() {
       const stored = await options.store.get(options.alias);
       if (!stored) {
-        throw new UserError(`Not logged in to '${options.alias}'.\nRun \`sail auth login ${options.alias}\`.`);
+        throw new UserError(`Not logged in to '${options.alias}'.\nRun \`mynt auth login ${options.alias}\`.`);
       }
       if (stored.expiresAt - REFRESH_MARGIN_MS > now()) return stored.accessToken;
 
@@ -37,7 +37,7 @@ export function createSession(options: {
         );
       } catch (error) {
         const details = error instanceof UserError ? error.message : String(error);
-        throw new UserError(`The login for '${options.alias}' has expired.\nRun \`sail auth login ${options.alias}\`.`, details);
+        throw new UserError(`The login for '${options.alias}' has expired.\nRun \`mynt auth login ${options.alias}\`.`, details);
       }
       await options.store.set(options.alias, refreshed);
       return refreshed.accessToken;

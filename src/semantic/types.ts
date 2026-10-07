@@ -1,5 +1,5 @@
 /**
- * Sail's value types as the binder sees them.
+ * Mynt's value types as the binder sees them.
  *
  * Primitive field types are the schema's string names so they compare with
  * `===` and read naturally in tests. Record types carry their schema so field
@@ -68,7 +68,7 @@ export interface LineType {
   sublist: SublistSchema;
 }
 
-export type SailType = FieldType | "Bool" | "Void" | RecordType | SequenceType | SublistType | LineType;
+export type MyntType = FieldType | "Bool" | "Void" | RecordType | SequenceType | SublistType | LineType;
 
 export function recordType(record: RecordSchema, origin: RecordOrigin): RecordType {
   return { kind: "Record", record, origin };
@@ -78,11 +78,11 @@ export function sequenceType(record: RecordSchema): SequenceType {
   return { kind: "Sequence", element: recordType(record, "query") };
 }
 
-export function isRecordType(type: SailType): type is RecordType {
+export function isRecordType(type: MyntType): type is RecordType {
   return typeof type === "object" && type.kind === "Record";
 }
 
-export function isSequenceType(type: SailType): type is SequenceType {
+export function isSequenceType(type: MyntType): type is SequenceType {
   return typeof type === "object" && type.kind === "Sequence";
 }
 
@@ -90,11 +90,11 @@ export function sublistType(parent: RecordType, sublist: SublistSchema): Sublist
   return { kind: "Sublist", parent, sublist };
 }
 
-export function isSublistType(type: SailType): type is SublistType {
+export function isSublistType(type: MyntType): type is SublistType {
   return typeof type === "object" && type.kind === "Sublist";
 }
 
-export function isLineType(type: SailType): type is LineType {
+export function isLineType(type: MyntType): type is LineType {
   return typeof type === "object" && type.kind === "Line";
 }
 
@@ -109,7 +109,7 @@ export function sublistName(type: SublistType | LineType): string {
  * assignability (not identity) must consult origin, since a context record
  * cannot stand in where a saveable one is required.
  */
-export function sameType(a: SailType, b: SailType): boolean {
+export function sameType(a: MyntType, b: MyntType): boolean {
   if (isRecordType(a) || isRecordType(b)) {
     return isRecordType(a) && isRecordType(b) && a.record === b.record;
   }
@@ -123,7 +123,7 @@ export function sameType(a: SailType, b: SailType): boolean {
 }
 
 /** How a type is spelled in diagnostics: `Text`, `Bool`, `Void`, `Customer`, `Sequence<Customer>`. */
-export function typeName(type: SailType): string {
+export function typeName(type: MyntType): string {
   if (isRecordType(type)) return type.record.name;
   if (isSequenceType(type)) return `Sequence<${type.element.record.name}>`;
   if (isSublistType(type)) return `Sublist<${sublistName(type)}>`;

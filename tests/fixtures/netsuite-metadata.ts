@@ -4,8 +4,8 @@
  *
  * This fixture is a reconstruction from NetSuite's documentation and from
  * the shapes the normalizer must handle, not a capture from an account.
- * `sail schema pull --keep-raw` writes real responses to
- * .sail/schema/raw/<alias>/ so this fixture can be replaced by captures.
+ * `mynt schema pull --keep-raw` writes real responses to
+ * .mynt/schema/raw/<alias>/ so this fixture can be replaced by captures.
  */
 import type { RawMetadata } from "../../src/netsuite/client/metadata.js";
 
@@ -39,13 +39,13 @@ export const rawMetadata: RawMetadata = {
         subsidiary: { ...nsResource, title: "Subsidiary", $ref: "/services/rest/record/v1/metadata-catalog/subsidiary" },
         salesRep: { ...nsResource, title: "Sales Rep" },
         emailPreference: { title: "Email Preference", type: "string", enum: ["_pdf", "_html", "_default"], nullable: true },
-        custentity_sail_tier: {
-          title: "Sail Tier",
+        custentity_mynt_tier: {
+          title: "Mynt Tier",
           type: "string",
           nullable: true,
-          "x-ns-custom-field": "custentity_sail_tier",
+          "x-ns-custom-field": "custentity_mynt_tier",
         },
-        custentity_sail_score: { title: "Sail Score", type: "number", format: "double", nullable: true },
+        custentity_mynt_score: { title: "Mynt Score", type: "number", format: "double", nullable: true },
         addressBook: { title: "Address Book", type: "object", properties: { items: { type: "array" } }, nullable: true },
         shippingItem: { ...nsResource, title: "Shipping Item", nullable: true },
         currencyPrecision: { title: "Currency Precision", nullable: true },
@@ -63,7 +63,7 @@ export const rawMetadata: RawMetadata = {
         tranDate: { title: "Date", type: "string", format: "date", nullable: true },
         entity: { ...nsResource, title: "Customer", $ref: "/services/rest/record/v1/metadata-catalog/customer" },
         item: { title: "Items", type: "object", properties: { items: { type: "array" } }, nullable: true },
-        custbody_sail_note: { title: "Sail Note", type: "string", nullable: true },
+        custbody_mynt_note: { title: "Mynt Note", type: "string", nullable: true },
       },
     },
     subsidiary: {
@@ -74,15 +74,15 @@ export const rawMetadata: RawMetadata = {
         name: { title: "Name", type: "string", nullable: true },
       },
     },
-    customrecord_sail_test: {
+    customrecord_mynt_test: {
       type: "object",
       properties: {
         links: { type: "array", items: { type: "object" } },
         id: { title: "Internal ID", type: "string", nullable: true },
         name: { title: "Name", type: "string", nullable: true },
         isInactive: { title: "Inactive", type: "boolean", nullable: true },
-        custrecord_sail_active: { title: "Active", type: "boolean", nullable: true },
-        custrecord_sail_owner: { ...nsResource, title: "Owner", $ref: "/services/rest/record/v1/metadata-catalog/customer" },
+        custrecord_mynt_active: { title: "Active", type: "boolean", nullable: true },
+        custrecord_mynt_owner: { ...nsResource, title: "Owner", $ref: "/services/rest/record/v1/metadata-catalog/customer" },
       },
     },
   },

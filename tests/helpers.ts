@@ -4,7 +4,7 @@ import type { SchemaDocument } from "../src/schema/types.js";
 
 /** The test fixture schema. Same shape as schemas/builtin.json on purpose. */
 export const fixtureSchema: SchemaDocument = {
-  sailSchemaVersion: 1,
+  myntSchemaVersion: 1,
   source: { kind: "builtin" },
   records: {
     customer: {
@@ -36,13 +36,13 @@ export const fixtureSchema: SchemaDocument = {
         },
       },
     },
-    customrecord_sail_log: {
-      name: "SailLog",
+    customrecord_mynt_log: {
+      name: "MyntLog",
       custom: true,
       fields: {
         name: { type: "Text", label: "Name", writable: true },
-        custrecord_sail_message: { type: "Text", label: "Message", writable: true, custom: true },
-        custrecord_sail_done: { type: "Bool", label: "Done", writable: true, custom: true },
+        custrecord_mynt_message: { type: "Text", label: "Message", writable: true, custom: true },
+        custrecord_mynt_done: { type: "Bool", label: "Done", writable: true, custom: true },
       },
     },
     invoice: {
@@ -71,7 +71,7 @@ export const fixtureSchema: SchemaDocument = {
 
 export const schema = new DocumentSchemaProvider(fixtureSchema);
 
-export function compileSail(source: string, file = "test.sail"): CompileResult {
+export function compileMynt(source: string, file = "test.mn"): CompileResult {
   return compile(source, { file, schema });
 }
 

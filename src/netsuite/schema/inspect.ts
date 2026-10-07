@@ -5,7 +5,7 @@
  * `$ref` points at, how custom fields and records are marked, how
  * `readOnly`, `nullable`, and `required` are used, and what enums contain.
  *
- * It reads the files `sail schema pull --keep-raw` wrote and prints text.
+ * It reads the files `mynt schema pull --keep-raw` wrote and prints text.
  * It never changes anything, and it prints property names and enum values
  * but no field labels, so the output is easier to share than the raw files.
  */

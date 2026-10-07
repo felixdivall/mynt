@@ -26,15 +26,15 @@ export function serializeSnapshot(document: SchemaDocument): string {
 }
 
 export function readSnapshot(path: string): SchemaDocument {
-  if (!existsSync(path)) throw new UserError(`No schema snapshot at ${path}.\nRun \`sail schema pull\`.`);
+  if (!existsSync(path)) throw new UserError(`No schema snapshot at ${path}.\nRun \`mynt schema pull\`.`);
   let parsed: Partial<SchemaDocument>;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<SchemaDocument>;
   } catch (error) {
     throw new UserError(`${path} is not valid JSON.`, String(error));
   }
-  if (parsed.sailSchemaVersion !== 1 || typeof parsed.records !== "object" || !parsed.records) {
-    throw new UserError(`${path} is not a Sail schema snapshot (expected "sailSchemaVersion": 1).`);
+  if (parsed.myntSchemaVersion !== 1 || typeof parsed.records !== "object" || !parsed.records) {
+    throw new UserError(`${path} is not a Mynt schema snapshot (expected "myntSchemaVersion": 1).`);
   }
   return parsed as SchemaDocument;
 }

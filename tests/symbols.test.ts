@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/compiler.js";
 import { LineIndex } from "../src/lsp/position.js";
 import { ProjectRegistry } from "../src/lsp/project.js";
-import { SailLanguageService } from "../src/lsp/service.js";
+import { MyntLanguageService } from "../src/lsp/service.js";
 import { DocumentSchemaProvider } from "../src/schema/provider.js";
 import { analyze } from "../src/semantic/query.js";
 import { declarationOf, referencesOf, renameConflict, symbolAt, symbolName, type SemanticSymbol } from "../src/semantic/symbols.js";
@@ -14,7 +14,7 @@ function at(source: string) {
   const offset = source.indexOf("§");
   if (offset < 0) throw new Error("no cursor");
   const text = source.slice(0, offset) + source.slice(offset + 1);
-  return { doc: analyze(text, "test.sail", schema), offset, text };
+  return { doc: analyze(text, "test.mn", schema), offset, text };
 }
 
 /** The source text of each reference, with `[declaration]` marked, for readable assertions. */
@@ -38,7 +38,7 @@ const UE = `beforeSubmit edit (customer: Customer) {\n`;
 describe("semantic symbols", () => {
   it("identifies a parameter at its declaration and at every use as one symbol", () => {
     const text = `beforeSubmit edit (customer: Customer) {\n    log.debug(customer.email)\n    customer.comments = "x"\n    save customer\n}\n`;
-    const doc = analyze(text, "t.sail", schema);
+    const doc = analyze(text, "t.mn", schema);
     const declaration = symbolAt(doc, text.indexOf("(customer:") + 1);
     const read = symbolAt(doc, text.indexOf("debug(customer") + 8);
     const write = symbolAt(doc, text.indexOf("\n    customer.comments") + 7);
@@ -53,7 +53,7 @@ describe("semantic symbols", () => {
 
   it("identifies a let local at its declaration and uses", () => {
     const text = `scheduled {\n    let customer = load Customer("123")\n    log.debug(customer.email)\n    save customer\n}\n`;
-    const doc = analyze(text, "t.sail", schema);
+    const doc = analyze(text, "t.mn", schema);
     const declaration = symbolAt(doc, text.indexOf("let customer") + 6);
     const use = symbolAt(doc, text.indexOf("save customer") + 6);
     if (declaration?.kind !== "local" || use?.kind !== "local") throw new Error();
@@ -64,7 +64,7 @@ describe("semantic symbols", () => {
 
   it("keeps same-spelled locals in sibling scopes distinct", () => {
     const source = `scheduled {\n    if true {\n        let record = load Customer("1")\n        log.debug(record.email)\n    }\n    if false {\n        let record = load Customer("2")\n        log.debug(record.email)\n    }\n}\n`;
-    const doc = analyze(source, "t.sail", schema);
+    const doc = analyze(source, "t.mn", schema);
     const first = symbolAt(doc, source.indexOf('let record = load Customer("1")') + 5);
     const second = symbolAt(doc, source.indexOf('let record = load Customer("2")') + 5);
     if (first?.kind !== "local" || second?.kind !== "local") throw new Error();
@@ -126,7 +126,7 @@ describe("find references", () => {
   it("survives an unrelated syntax error elsewhere in the body", () => {
     const source = `scheduled {\n    let customer = load Customer("1")\n    log.debug(customer.email)\n\n    totally broken syntax here\n\n    save cust§omer\n}\n`;
     const { doc } = at(source);
-    expect(doc.diagnostics.map((d) => d.code)).toContain("SAIL0001");
+    expect(doc.diagnostics.map((d) => d.code)).toContain("MYNT0001");
     expect(refs(source)).toEqual(["1:8 customer [declaration]", "2:14 customer", "6:9 customer"]);
   });
 
@@ -144,7 +144,7 @@ describe("find references", () => {
     shared.records.salesorder!.fields.comments = { type: "Text", label: "Comments", writable: true };
     const provider = new DocumentSchemaProvider(shared);
     const text = `scheduled {\n    let c = load Customer("1")\n    let o = load SalesOrder("2")\n    c.comments = "x"\n    o.comments = "y"\n    log.debug(c.comments)\n    log.debug(o.comments)\n    save c\n    save o\n}\n`;
-    const doc = analyze(text, "t.sail", provider);
+    const doc = analyze(text, "t.mn", provider);
     const symbol = symbolAt(doc, text.indexOf("c.comments") + 2)!;
     expect(symbolName(symbol)).toBe("Customer.comments");
     expect(referencesOf(doc, symbol).map((r) => `${r.span.start.line}:${r.span.start.column}`)).toEqual(["4:7", "6:17"]);
@@ -221,8 +221,8 @@ describe("rename validation", () => {
 
 describe("rename and references through the language service", () => {
   function service(text: string) {
-    const svc = new SailLanguageService(new ProjectRegistry(() => schema));
-    const uri = "untitled:t.sail";
+    const svc = new MyntLanguageService(new ProjectRegistry(() => schema));
+    const uri = "untitled:t.mn";
     svc.open(uri, text, 1);
     return { svc, uri, lines: new LineIndex(text), text };
   }
@@ -243,7 +243,7 @@ describe("rename and references through the language service", () => {
     expect(edits.map((e) => `${e.range.start.line}:${e.range.start.character}-${e.range.end.character}`)).toEqual(["1:8-16", "2:14-22", "3:9-17"]);
     const renamed = applyEdits(text, edits);
     expect(renamed).toBe(`scheduled {\n    let client = load Customer("123")\n    log.debug(client.email)\n    save client\n}\n`);
-    expect(compile(renamed, { file: "t.sail", schema }).diagnostics).toEqual([]);
+    expect(compile(renamed, { file: "t.mn", schema }).diagnostics).toEqual([]);
   });
 
   it("renames a parameter and an owned local, and keeps a field named like the local untouched", () => {
@@ -261,7 +261,7 @@ describe("rename and references through the language service", () => {
     const result = svc.rename(uri, lines.positionAt(text.indexOf("let customer") + 4), "record");
     if ("error" in result) throw new Error(result.error);
     const renamed = applyEdits(text, result.ok.changes![uri]!);
-    const compiled = compile(renamed, { file: "t.sail", schema });
+    const compiled = compile(renamed, { file: "t.mn", schema });
     expect(compiled.diagnostics).toEqual([]);
     expect(compiled.output).toContain('define(["N/record"], (record$) => {');
     expect(compiled.output).toContain("const record = record$.create({");
@@ -324,7 +324,7 @@ describe("references for the new operations", () => {
 describe("loop variables and query references", () => {
   it("renames and finds references to a loop variable, scoped to its body", () => {
     const text = `scheduled {\n    for customer in query Customer {\n        log.debug(customer.email)\n        let loaded = load Customer(customer.id)\n        save loaded\n    }\n}\n`;
-    const doc = analyze(text, "t.sail", schema);
+    const doc = analyze(text, "t.mn", schema);
     const symbol = symbolAt(doc, text.indexOf("customer.email") + 2);
     expect(symbol).toMatchObject({ kind: "local", local: { name: "customer", origin: "loop" } });
     expect(referencesOf(doc, symbol!).map((r) => `${r.span.start.line - 1}:${r.span.start.column - 1}${r.isDeclaration ? " [declaration]" : ""}`)).toEqual(["1:8 [declaration]", "2:18", "3:35"]);
@@ -345,7 +345,7 @@ describe("sublist symbols", () => {
 
   it("renames and finds references to a line local, and refuses the sublist and its fields", () => {
     const text = `${ORDER}    for line in order.item {\n        if line.quantity < 1 {\n            line.quantity = 1\n        }\n    }\n    save order\n}\n`;
-    const doc = analyze(text, "t.sail", schema);
+    const doc = analyze(text, "t.mn", schema);
     const line = symbolAt(doc, text.indexOf("line.quantity") + 1)!;
     expect(line).toMatchObject({ kind: "local", local: { name: "line", origin: "loop" } });
     expect(referencesOf(doc, line).map((r) => `${r.span.start.line - 1}:${r.span.start.column - 1}${r.isDeclaration ? " [declaration]" : ""}`)).toEqual(["2:8 [declaration]", "3:11", "4:12"]);
@@ -363,7 +363,7 @@ describe("sublist symbols", () => {
 
   it("keeps a sublist field distinct from a body field or another sublist's field of the same name", () => {
     const text = `${ORDER}    let inv = load Invoice("2")\n    for line in order.item {\n        log.debug(line.item)\n    }\n    for line in inv.item {\n        log.debug(line.item)\n    }\n}\n`;
-    const doc = analyze(text, "t.sail", schema);
+    const doc = analyze(text, "t.mn", schema);
     const orderItem = symbolAt(doc, text.indexOf("order.item") + 7)!;
     const invoiceItem = symbolAt(doc, text.indexOf("inv.item") + 5)!;
     expect(symbolName(orderItem)).toBe("SalesOrder.item");
@@ -378,7 +378,7 @@ describe("sublist symbols", () => {
 describe("add-block symbols", () => {
   it("initializer fields and sublists in add blocks share schema identity with loops, and locals in values rename", () => {
     const text = `scheduled {\n    let qty = 2\n    let order = load SalesOrder("1")\n    add order.item {\n        quantity = qty\n    }\n    for line in order.item {\n        line.quantity = qty\n    }\n    save order\n}\n`;
-    const doc = analyze(text, "t.sail", schema);
+    const doc = analyze(text, "t.mn", schema);
     const field = symbolAt(doc, text.indexOf("quantity = qty") + 2)!;
     expect(symbolName(field)).toBe("SalesOrder.item.quantity");
     expect(referencesOf(doc, field).map((r) => `${r.span.start.line - 1}:${r.span.start.column - 1}`)).toEqual(["4:8", "7:13"]);
@@ -399,7 +399,7 @@ describe("function symbols", () => {
   const text = `fn setMemo(order: SalesOrder, memo: Text) {\n    order.memo = memo\n}\nscheduled {\n    let order = load SalesOrder("1")\n    setMemo(order, "x")\n    setMemo(order, "y")\n    save order\n}\n`;
 
   it("finds references to a function from its declaration and calls, and goes to the declaration", () => {
-    const doc = analyze(text, "t.sail", schema);
+    const doc = analyze(text, "t.mn", schema);
     const fromCall = symbolAt(doc, text.indexOf('setMemo(order, "y")') + 2)!;
     const fromDeclaration = symbolAt(doc, text.indexOf("fn setMemo") + 4)!;
     expect(fromCall).toMatchObject({ kind: "function", function: { name: "setMemo" } });
@@ -413,7 +413,7 @@ describe("function symbols", () => {
   });
 
   it("parameters are ordinary locals: references, scope, and rename", () => {
-    const doc = analyze(text, "t.sail", schema);
+    const doc = analyze(text, "t.mn", schema);
     const parameter = symbolAt(doc, text.indexOf("(order: SalesOrder") + 2)!;
     expect(parameter).toMatchObject({ kind: "local", local: { name: "order", origin: "parameter" } });
     expect(referencesOf(doc, parameter).map((r) => `${r.span.start.line - 1}:${r.span.start.column - 1}`)).toEqual(["0:11", "1:4"]);
@@ -426,8 +426,8 @@ describe("function symbols", () => {
   });
 
   it("renames a function at every site and refuses collisions and reserved words", () => {
-    const svc = new SailLanguageService(new ProjectRegistry(() => schema));
-    const uri = "untitled:t.sail";
+    const svc = new MyntLanguageService(new ProjectRegistry(() => schema));
+    const uri = "untitled:t.mn";
     svc.open(uri, text, 1);
     const lines = new LineIndex(text);
     const result = svc.rename(uri, lines.positionAt(text.indexOf('setMemo(order, "x")') + 3), "stamp");

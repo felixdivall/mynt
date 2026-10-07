@@ -1,10 +1,10 @@
 /**
  * Configuration lives in three places with different trust levels:
  *
- *   project   `sail.json` at the project root. Committed. Holds only the
+ *   project   `mynt.json` at the project root. Committed. Holds only the
  *             default account alias; never an account id, client id, or
  *             secret. The schema snapshot path is derived from the alias.
- *   user      `$SAIL_CONFIG_DIR/config.json` (default ~/.config/sail).
+ *   user      `$MYNT_CONFIG_DIR/config.json` (default ~/.config/mynt).
  *             Per developer. Maps aliases to account id, OAuth client id,
  *             and loopback port. Not secret, but not project data either.
  *   secrets   the CredentialStore (see credentials.ts). Tokens only.
@@ -34,13 +34,13 @@ export interface ProjectConfig {
   account?: string;
 }
 
-export const PROJECT_CONFIG_FILE = "sail.json";
+export const PROJECT_CONFIG_FILE = "mynt.json";
 export const DEFAULT_REDIRECT_PORT = 8484;
 
 export function userConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.SAIL_CONFIG_DIR) return env.SAIL_CONFIG_DIR;
+  if (env.MYNT_CONFIG_DIR) return env.MYNT_CONFIG_DIR;
   const base = env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
-  return join(base, "sail");
+  return join(base, "mynt");
 }
 
 /** Reads and writes the per-user account profiles. */
@@ -71,7 +71,7 @@ export class UserConfigStore {
   getProfile(alias: string): AccountProfile {
     const profile = this.read().accounts[alias];
     if (!profile) {
-      throw new UserError(`No account profile named '${alias}'.\nRun \`sail account add ${alias}\`.`);
+      throw new UserError(`No account profile named '${alias}'.\nRun \`mynt account add ${alias}\`.`);
     }
     return profile;
   }
@@ -83,7 +83,7 @@ export class UserConfigStore {
   }
 }
 
-/** Finds the directory containing `sail.json`, walking up from `from`. */
+/** Finds the directory containing `mynt.json`, walking up from `from`. */
 export function findProjectRoot(from: string): string | undefined {
   let dir = from;
   for (;;) {
@@ -107,12 +107,12 @@ export function writeProjectConfig(root: string, config: ProjectConfig): void {
   writeFileSync(join(root, PROJECT_CONFIG_FILE), JSON.stringify(out, null, 2) + "\n");
 }
 
-/** Where `sail schema pull <alias>` writes the committed snapshot. */
+/** Where `mynt schema pull <alias>` writes the committed snapshot. */
 export function schemaSnapshotPath(root: string, alias: string): string {
-  return join(root, ".sail", "schema", `${alias}.json`);
+  return join(root, ".mynt", "schema", `${alias}.json`);
 }
 
-/** Where `sail schema pull --keep-raw` writes NetSuite's raw responses. Git-ignored. */
+/** Where `mynt schema pull --keep-raw` writes NetSuite's raw responses. Git-ignored. */
 export function rawMetadataDir(root: string, alias: string): string {
-  return join(root, ".sail", "schema", "raw", alias);
+  return join(root, ".mynt", "schema", "raw", alias);
 }

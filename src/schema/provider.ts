@@ -5,7 +5,7 @@ import type { FieldSchema, RecordSchema, SchemaDocument, SchemaDocumentField, Su
  * (built-in, account snapshot, test fixture) is the caller's concern.
  */
 export interface SchemaProvider {
-  /** Look up a record type by its Sail name, e.g. `Customer`. */
+  /** Look up a record type by its Mynt name, e.g. `Customer`. */
   getRecordByName(name: string): RecordSchema | undefined;
   /** All known record types, for diagnostics and future completion. */
   listRecords(): readonly RecordSchema[];

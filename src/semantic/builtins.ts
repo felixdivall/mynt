@@ -1,5 +1,5 @@
 /**
- * Sail built-ins: platform functions the language understands natively.
+ * Mynt built-ins: platform functions the language understands natively.
  *
  * A built-in is resolved by the binder from ordinary identifiers (`log.debug`
  * is a MemberExpression over the identifier `log`; `load` is a root
@@ -130,7 +130,7 @@ const COPY: Builtin = {
 /**
  * `transform SalesOrder("123") to Invoice`: N/record `record.transform`. A
  * new, unsaved record of the target type derived from the source. NetSuite
- * permits only certain source/target pairs; Sail does not check the pair,
+ * permits only certain source/target pairs; Mynt does not check the pair,
  * so an unsupported one fails at runtime.
  */
 const TRANSFORM: Builtin = {

@@ -19,7 +19,7 @@ import {
   type SignatureHelp,
   type WorkspaceEdit,
 } from "vscode-languageserver";
-import type { Diagnostic as SailDiagnostic } from "../diagnostics.js";
+import type { Diagnostic as MyntDiagnostic } from "../diagnostics.js";
 import { analyze, type SemanticDocument } from "../semantic/query.js";
 import { completionsAt } from "./completion.js";
 import { hoverAt } from "./hover.js";
@@ -38,7 +38,7 @@ interface OpenDocument {
   analysis: SemanticDocument;
 }
 
-export class SailLanguageService {
+export class MyntLanguageService {
   private readonly documents = new Map<string, OpenDocument>();
 
   constructor(private readonly projects: ProjectRegistry) {}
@@ -80,7 +80,7 @@ export class SailLanguageService {
       items.unshift({
         range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
         severity: DiagnosticSeverity.Warning,
-        source: "sail",
+        source: "mynt",
         message: `${doc.schema.problem} Checking against the built-in sample schema until then.`,
       });
     }
@@ -161,12 +161,12 @@ export class SailLanguageService {
   }
 }
 
-export function toLspDiagnostic(diagnostic: SailDiagnostic, lines: LineIndex): Diagnostic {
+export function toLspDiagnostic(diagnostic: MyntDiagnostic, lines: LineIndex): Diagnostic {
   return {
     range: lines.rangeOf(diagnostic.span),
     severity: diagnostic.severity === "error" ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
     code: diagnostic.code,
-    source: "sail",
+    source: "mynt",
     message: diagnostic.message,
   };
 }

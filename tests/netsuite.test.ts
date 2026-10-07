@@ -25,7 +25,7 @@ function normalized() {
 }
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "sail-test-"));
+  return mkdtempSync(join(tmpdir(), "mynt-test-"));
 }
 
 describe("account urls", () => {
@@ -44,15 +44,15 @@ describe("account urls", () => {
 
 describe("profiles and project config", () => {
   it("stores and looks up profiles, and reports a missing one with the fix", () => {
-    const store = new UserConfigStore(join(tempDir(), "sail"));
+    const store = new UserConfigStore(join(tempDir(), "mynt"));
     expect(store.read()).toEqual({ accounts: {} });
     store.setProfile("sandbox", { accountId: "1234567_SB1", clientId: "abc", redirectPort: 8484 });
     expect(store.getProfile("sandbox")).toEqual({ accountId: "1234567_SB1", clientId: "abc", redirectPort: 8484 });
-    expect(() => store.getProfile("prod")).toThrow("No account profile named 'prod'.\nRun `sail account add prod`.");
+    expect(() => store.getProfile("prod")).toThrow("No account profile named 'prod'.\nRun `mynt account add prod`.");
   });
 
   it("never serializes anything but the three profile fields", () => {
-    const store = new UserConfigStore(join(tempDir(), "sail"));
+    const store = new UserConfigStore(join(tempDir(), "mynt"));
     const poisoned = { accountId: "1", clientId: "c", redirectPort: 1, refreshToken: "SECRET", accessToken: "SECRET" };
     store.setProfile("x", poisoned as never);
     const text = readFileSync(store.path, "utf8");
@@ -64,7 +64,7 @@ describe("profiles and project config", () => {
   it("project config holds only the account alias and is found by walking up", () => {
     const root = tempDir();
     writeProjectConfig(root, { account: "sandbox", secret: "no" } as never);
-    expect(JSON.parse(readFileSync(join(root, "sail.json"), "utf8"))).toEqual({ account: "sandbox" });
+    expect(JSON.parse(readFileSync(join(root, "mynt.json"), "utf8"))).toEqual({ account: "sandbox" });
     expect(findProjectRoot(join(root, "a", "b"))).toBe(root);
     expect(findProjectRoot(tmpdir())).toBeUndefined();
     expect(readProjectConfig(root)).toEqual({ account: "sandbox" });
@@ -73,7 +73,7 @@ describe("profiles and project config", () => {
 
 describe("credential stores", () => {
   it("file store round-trips with mode 0600 and removes the file when empty", async () => {
-    const path = join(tempDir(), "sail", "credentials.json");
+    const path = join(tempDir(), "mynt", "credentials.json");
     const store = new FileCredentialStore(path);
     expect(store.warning).toContain("development fallback");
     await store.set("sandbox", { accessToken: "a", refreshToken: "r", expiresAt: 1 });
@@ -169,7 +169,7 @@ describe("session and rest client", () => {
     const store = new MemoryCredentialStore();
     const fetchImpl = fakeNetSuiteFetch({ tokenResponses: [{ access_token: "NEW", refresh_token: "RT2", expires_in: 3600 }] });
     const session = createSession({ alias: "sandbox", profile, store, fetch: fetchImpl });
-    await expect(session.accessToken()).rejects.toThrow("Not logged in to 'sandbox'.\nRun `sail auth login sandbox`.");
+    await expect(session.accessToken()).rejects.toThrow("Not logged in to 'sandbox'.\nRun `mynt auth login sandbox`.");
 
     await store.set("sandbox", { accessToken: "OLD", refreshToken: "RT", expiresAt: Date.now() + 10 * 60 * 1000 });
     expect(await session.accessToken()).toBe("OLD");
@@ -183,7 +183,7 @@ describe("session and rest client", () => {
     const store = new MemoryCredentialStore();
     await store.set("sandbox", { accessToken: "OLD", refreshToken: "RT", expiresAt: 0 });
     const session = createSession({ alias: "sandbox", profile, store, fetch: fakeNetSuiteFetch() });
-    await expect(session.accessToken()).rejects.toThrow("The login for 'sandbox' has expired.\nRun `sail auth login sandbox`.");
+    await expect(session.accessToken()).rejects.toThrow("The login for 'sandbox' has expired.\nRun `mynt auth login sandbox`.");
   });
 
   it("sends the bearer token and translates NetSuite errors without echoing it", async () => {
@@ -198,7 +198,7 @@ describe("session and rest client", () => {
     await store.set("sandbox", { accessToken: "WRONG", refreshToken: "RT", expiresAt: Date.now() + 3600_000 });
     const error = await client.getJson("/record/v1/metadata-catalog", "the record type list").catch((e: UserError) => e);
     expect(error).toBeInstanceOf(UserError);
-    expect((error as UserError).message).toBe("Could not authenticate to NetSuite account '1234567_SB1'. Run `sail auth login` again.");
+    expect((error as UserError).message).toBe("Could not authenticate to NetSuite account '1234567_SB1'. Run `mynt auth login` again.");
     expect((error as UserError).details).toBe("INVALID_LOGIN: Invalid login attempt.");
     expect((error as UserError).message + (error as UserError).details).not.toContain("WRONG");
   });
@@ -219,8 +219,8 @@ describe("raw metadata pull", () => {
     const client = new RestClient({ accountId: profile.accountId, session: createSession({ alias: "s", profile, store, fetch: fetchImpl }), fetch: fetchImpl });
     const progress: string[] = [];
     const raw = await pullRawMetadata(client, { onProgress: (_d, _t, type) => progress.push(type) });
-    expect(Object.keys(raw.records).sort()).toEqual(["customer", "customrecord_sail_test", "salesOrder", "subsidiary"]);
-    expect(progress.sort()).toEqual(["customer", "customrecord_sail_test", "salesOrder", "subsidiary"]);
+    expect(Object.keys(raw.records).sort()).toEqual(["customer", "customrecord_mynt_test", "salesOrder", "subsidiary"]);
+    expect(progress.sort()).toEqual(["customer", "customrecord_mynt_test", "salesOrder", "subsidiary"]);
     const limited = await pullRawMetadata(client, { records: ["salesOrder"] });
     expect(Object.keys(limited.records)).toEqual(["salesOrder"]);
     const partial = await pullRawMetadata(client, { records: ["nope", "customer"] });
@@ -235,7 +235,7 @@ describe("raw metadata pull", () => {
     await store.set("s", { accessToken: "T", refreshToken: "R", expiresAt: Date.now() + 3600_000 });
     const client = new RestClient({ accountId: profile.accountId, session: createSession({ alias: "s", profile, store, fetch: forbidding }), fetch: forbidding });
     const raw = await pullRawMetadata(client);
-    expect(Object.keys(raw.records)).toEqual(["customer", "customrecord_sail_test", "subsidiary"]);
+    expect(Object.keys(raw.records)).toEqual(["customer", "customrecord_mynt_test", "subsidiary"]);
     expect(raw.failures).toEqual({ salesOrder: "salesOrder metadata could not be retrieved because the selected role does not have access." });
 
     await store.set("s", { accessToken: "WRONG", refreshToken: "R", expiresAt: Date.now() + 3600_000 });
@@ -249,11 +249,11 @@ describe("schema normalization", () => {
   const order = document.records.salesorder!;
 
   it("writes the account header", () => {
-    expect(document.sailSchemaVersion).toBe(1);
+    expect(document.myntSchemaVersion).toBe(1);
     expect(document.source).toEqual({ kind: "account", platform: "netsuite", account: "1234567_SB1", pulledAt: PULLED_AT });
   });
 
-  it("normalizes Customer: Sail name, SuiteScript id, platform constant, provenance", () => {
+  it("normalizes Customer: Mynt name, SuiteScript id, platform constant, provenance", () => {
     expect(customer.name).toBe("Customer");
     expect(customer.suiteScriptType).toBe("CUSTOMER");
     expect(customer.custom).toBeUndefined();
@@ -288,9 +288,9 @@ describe("schema normalization", () => {
   });
 
   it("marks custom fields by the x-ns-custom-field key or the script id prefix", () => {
-    expect(customer.fields.custentity_sail_tier).toMatchObject({ type: "Text", custom: true });
-    expect(customer.fields.custentity_sail_score).toMatchObject({ type: "Number", custom: true });
-    expect(order.fields.custbody_sail_note).toMatchObject({ type: "Text", custom: true });
+    expect(customer.fields.custentity_mynt_tier).toMatchObject({ type: "Text", custom: true });
+    expect(customer.fields.custentity_mynt_score).toMatchObject({ type: "Number", custom: true });
+    expect(order.fields.custbody_mynt_note).toMatchObject({ type: "Text", custom: true });
     expect(customer.fields.email!.custom).toBeUndefined();
   });
 
@@ -315,12 +315,12 @@ describe("schema normalization", () => {
   });
 
   it("represents a custom record like any other record", () => {
-    const custom = document.records.customrecord_sail_test!;
-    expect(custom.name).toBe("SailTest");
+    const custom = document.records.customrecord_mynt_test!;
+    expect(custom.name).toBe("MyntTest");
     expect(custom.custom).toBe(true);
     expect(custom.suiteScriptType).toBeUndefined();
-    expect(custom.fields.custrecord_sail_active).toMatchObject({ type: "Bool", custom: true });
-    expect(custom.fields.custrecord_sail_owner).toMatchObject({ type: "Ref", refTarget: "Customer", custom: true });
+    expect(custom.fields.custrecord_mynt_active).toMatchObject({ type: "Bool", custom: true });
+    expect(custom.fields.custrecord_mynt_owner).toMatchObject({ type: "Ref", refTarget: "Customer", custom: true });
     expect(custom.fields.isinactive).toMatchObject({ type: "Bool" });
   });
 
@@ -338,18 +338,18 @@ describe("snapshot", () => {
     const { document } = normalized();
     const text = serializeSnapshot(document);
     expect(text).toBe(serializeSnapshot(JSON.parse(JSON.stringify(document)) as SchemaDocument));
-    const reordered: SchemaDocument = { records: document.records, source: document.source, sailSchemaVersion: 1 };
+    const reordered: SchemaDocument = { records: document.records, source: document.source, myntSchemaVersion: 1 };
     expect(serializeSnapshot(reordered)).toBe(text);
     const keys = text.split("\n").filter((l) => /^  "/.test(l));
-    expect(keys.map((k) => k.trim().split('"')[1])).toEqual(["records", "sailSchemaVersion", "source"]);
+    expect(keys.map((k) => k.trim().split('"')[1])).toEqual(["myntSchemaVersion", "records", "source"]);
     const recordKeys = Object.keys((JSON.parse(text) as SchemaDocument).records);
     expect(recordKeys).toEqual([...recordKeys].sort());
     expect(text).not.toMatch(/token|secret|client/i);
-    expect(text).toContain('"sailSchemaVersion": 1');
+    expect(text).toContain('"myntSchemaVersion": 1');
   });
 
   it("does not rewrite an unchanged snapshot, and rewrites a changed one", () => {
-    const path = join(tempDir(), ".sail", "schema", "sandbox.json");
+    const path = join(tempDir(), ".mynt", "schema", "sandbox.json");
     const first = normalized().document;
     expect(writeSnapshot(path, first)).toBe("written");
     const before = readFileSync(path, "utf8");
@@ -367,7 +367,7 @@ describe("snapshot", () => {
   it("rejects files that are not snapshots", () => {
     const dir = tempDir();
     writeFileSync(join(dir, "x.json"), "{}");
-    expect(() => readSnapshot(join(dir, "x.json"))).toThrow("is not a Sail schema snapshot");
+    expect(() => readSnapshot(join(dir, "x.json"))).toThrow("is not a Mynt schema snapshot");
     expect(() => readSnapshot(join(dir, "missing.json"))).toThrow("No schema snapshot at");
   });
 });
@@ -399,7 +399,7 @@ describe("compiler against a pulled-style snapshot", () => {
   const provider = new DocumentSchemaProvider(normalized().document);
 
   it("compiles a user event against a real-shaped Customer field unchanged", () => {
-    const result = compile(`beforeSubmit edit (customer: Customer) {\n    customer.comments = "Compiled against pulled schema"\n}\n`, { file: "t.sail", schema: provider });
+    const result = compile(`beforeSubmit edit (customer: Customer) {\n    customer.comments = "Compiled against pulled schema"\n}\n`, { file: "t.mn", schema: provider });
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain("record: customer");
     expect(result.output).toContain('fieldId: "comments"');
@@ -407,8 +407,8 @@ describe("compiler against a pulled-style snapshot", () => {
 
   it("uses a Bool field as a condition and assigns Bool to it", () => {
     const result = compile(
-      `scheduled {\n    let customer = load Customer("1")\n    if customer.isperson {\n        customer.custentity_sail_tier = "person"\n        customer.isperson = false\n        save customer\n    }\n}\n`,
-      { file: "t.sail", schema: provider },
+      `scheduled {\n    let customer = load Customer("1")\n    if customer.isperson {\n        customer.custentity_mynt_tier = "person"\n        customer.isperson = false\n        save customer\n    }\n}\n`,
+      { file: "t.mn", schema: provider },
     );
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toMatch(/if \(\s*customer\.getValue\(\{\s*fieldId: "isperson"\s*\}\)\s*\) \{/);
@@ -416,17 +416,17 @@ describe("compiler against a pulled-style snapshot", () => {
   });
 
   it("compiles a custom field write and custom record load, and rejects an invented field", () => {
-    const custom = compile(`scheduled {\n    let t = load SailTest("1")\n    t.custrecord_sail_active = true\n    save t\n}\n`, { file: "t.sail", schema: provider });
+    const custom = compile(`scheduled {\n    let t = load MyntTest("1")\n    t.custrecord_mynt_active = true\n    save t\n}\n`, { file: "t.mn", schema: provider });
     expect(custom.diagnostics).toEqual([]);
-    expect(custom.output).toContain('type: "customrecord_sail_test"');
+    expect(custom.output).toContain('type: "customrecord_mynt_test"');
 
-    const invented = compile(`beforeSubmit edit (customer: Customer) {\n    customer.notreal = "x"\n}\n`, { file: "t.sail", schema: provider });
-    expect(invented.diagnostics.map((d) => d.code)).toEqual(["SAIL1004"]);
+    const invented = compile(`beforeSubmit edit (customer: Customer) {\n    customer.notreal = "x"\n}\n`, { file: "t.mn", schema: provider });
+    expect(invented.diagnostics.map((d) => d.code)).toEqual(["MYNT1004"]);
   });
 
   it("read-only, Number, Date, Ref, and Unknown fields behave truthfully", () => {
-    const codes = (source: string) => compile(source, { file: "t.sail", schema: provider }).diagnostics.map((d) => `${d.code} ${d.message}`);
-    expect(codes(`scheduled {\n    let c = load Customer("1")\n    c.balance = 1\n}\n`)[0]).toContain("SAIL1005 Customer.balance is read-only");
+    const codes = (source: string) => compile(source, { file: "t.mn", schema: provider }).diagnostics.map((d) => `${d.code} ${d.message}`);
+    expect(codes(`scheduled {\n    let c = load Customer("1")\n    c.balance = 1\n}\n`)[0]).toContain("MYNT1005 Customer.balance is read-only");
     expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.creditlimit > 1000 { save c }\n}\n`)).toEqual([]);
     expect(codes(`scheduled {\n    let c = load Customer("1")\n    log.debug(c.datecreated)\n}\n`)[0]).toContain("must be Text, but received Date");
     expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.subsidiary == "1" { }\n}\n`)[0]).toContain("Cannot compare Ref with Text");
@@ -458,7 +458,7 @@ describe("compiler boundary", () => {
 });
 
 describe("integration: live NetSuite account", () => {
-  const alias = process.env.SAIL_TEST_ACCOUNT;
+  const alias = process.env.MYNT_TEST_ACCOUNT;
   it.skipIf(!alias)("pulls real Customer metadata and finds a known standard field", async () => {
     const { UserConfigStore: Store, userConfigDir } = await import("../src/netsuite/account/config.js");
     const { defaultCredentialStore } = await import("../src/netsuite/account/credentials.js");

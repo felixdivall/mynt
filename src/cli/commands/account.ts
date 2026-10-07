@@ -13,9 +13,9 @@ import { stringOption, type ParsedArgs } from "../args.js";
 import type { CliContext } from "../context.js";
 
 const USAGE = `Usage:
-  sail account add <alias> [--account-id <id>] [--client-id <id>] [--port <port>]
-  sail account list
-  sail account use <alias>
+  mynt account add <alias> [--account-id <id>] [--client-id <id>] [--port <port>]
+  mynt account list
+  mynt account use <alias>
 `;
 
 export async function runAccount(args: ParsedArgs, context: CliContext): Promise<number> {
@@ -48,7 +48,7 @@ async function add(alias: string | undefined, args: ParsedArgs, context: CliCont
   const clientId = await ask(
     context,
     stringOption(args.options, "client-id"),
-    "OAuth 2.0 client id of the Sail integration record (Setup > Integration > Manage Integrations): ",
+    "OAuth 2.0 client id of the Mynt integration record (Setup > Integration > Manage Integrations): ",
   );
   const portText = stringOption(args.options, "port") ?? String(DEFAULT_REDIRECT_PORT);
   const redirectPort = Number(portText);
@@ -59,9 +59,9 @@ async function add(alias: string | undefined, args: ParsedArgs, context: CliCont
   const profile: AccountProfile = { accountId, clientId, redirectPort };
   context.userConfig.setProfile(alias, profile);
   context.stdout(
-    `sail: saved account '${alias}' (${accountId}) to ${context.userConfig.path}.\n` +
+    `mynt: saved account '${alias}' (${accountId}) to ${context.userConfig.path}.\n` +
       `      The integration record's redirect URI must be http://localhost:${redirectPort}/callback.\n` +
-      `      Next: sail auth login ${alias}\n`,
+      `      Next: mynt auth login ${alias}\n`,
   );
   return 0;
 }
@@ -72,7 +72,7 @@ async function list(context: CliContext): Promise<number> {
   const current = root ? readProjectConfig(root).account : undefined;
   const aliases = Object.keys(accounts).sort();
   if (aliases.length === 0) {
-    context.stdout("sail: no accounts configured. Run `sail account add <alias>`.\n");
+    context.stdout("mynt: no accounts configured. Run `mynt account add <alias>`.\n");
     return 0;
   }
   for (const alias of aliases) {
@@ -93,7 +93,7 @@ async function use(alias: string | undefined, context: CliContext): Promise<numb
   context.userConfig.getProfile(alias);
   const root = findProjectRoot(context.cwd) ?? context.cwd;
   writeProjectConfig(root, { ...readProjectConfig(root), account: alias });
-  context.stdout(`sail: ${root}/sail.json now selects account '${alias}'.\n`);
+  context.stdout(`mynt: ${root}/mynt.json now selects account '${alias}'.\n`);
   return 0;
 }
 
@@ -103,7 +103,7 @@ export function resolveAlias(given: string | undefined, context: CliContext): st
   const root = findProjectRoot(context.cwd);
   const alias = root ? readProjectConfig(root).account : undefined;
   if (!alias) {
-    throw new UserError("No account given and sail.json selects none.\nPass an alias, or run `sail account use <alias>`.");
+    throw new UserError("No account given and mynt.json selects none.\nPass an alias, or run `mynt account use <alias>`.");
   }
   return alias;
 }

@@ -1,18 +1,18 @@
 /**
  * Schema model: what the compiler knows about NetSuite record types.
  *
- * This is deliberately the same shape `sail schema pull` writes to disk, so
+ * This is deliberately the same shape `mynt schema pull` writes to disk, so
  * the built-in snapshot, a committed account snapshot, and a test fixture
  * are all just instances of SchemaDocument. The compiler never sees where a
  * document came from.
  */
 
 /**
- * Sail's value types for fields.
+ * Mynt's value types for fields.
  *
  *   Text, Number, Bool   fully typed: readable, assignable, comparable per
  *                        the language rules.
- *   Date                 a date/time value. Readable, but no Sail operation
+ *   Date                 a date/time value. Readable, but no Mynt operation
  *                        accepts one yet, so such a field is inert until the
  *                        language grows a Date type.
  *   Ref                  a reference to another record (a select field).
@@ -37,7 +37,7 @@ export interface FieldSchema {
   writable: boolean;
   /** True for account-specific custom fields. */
   custom: boolean;
-  /** For Ref fields: the Sail name of the target record type, when known. */
+  /** For Ref fields: the Mynt name of the target record type, when known. */
   refTarget?: string;
   /** True when the metadata marks the field required. Absent means the metadata did not say. */
   required?: boolean;
@@ -64,12 +64,12 @@ export interface SublistSchema {
 export interface RecordSchema {
   /** NetSuite record type id, e.g. `customer` or `salesorder`. */
   id: string;
-  /** Sail-facing name, e.g. `Customer` or `SalesOrder`. */
+  /** Mynt-facing name, e.g. `Customer` or `SalesOrder`. */
   name: string;
   /**
    * The `record.Type` constant name in SuiteScript, e.g. `SALES_ORDER`.
    * This is platform metadata, not account metadata: known standard records
-   * have one, custom records (and standard records Sail has no entry for)
+   * have one, custom records (and standard records Mynt has no entry for)
    * do not and are addressed by their id string instead.
    */
   suiteScriptType: string | undefined;
@@ -81,7 +81,7 @@ export interface RecordSchema {
 
 /** On-disk JSON shape. Keys of `records` are NetSuite record type ids. */
 export interface SchemaDocument {
-  sailSchemaVersion: 1;
+  myntSchemaVersion: 1;
   source: SchemaSource;
   records: Record<string, SchemaDocumentRecord>;
 }
@@ -105,7 +105,7 @@ export interface SchemaDocumentRecord {
   fields: Record<string, SchemaDocumentField>;
   /** Keys are NetSuite sublist ids. */
   sublists?: Record<string, SchemaDocumentSublist>;
-  /** Provenance in NetSuite's own terms. Written by `sail schema pull`, ignored by the compiler. */
+  /** Provenance in NetSuite's own terms. Written by `mynt schema pull`, ignored by the compiler. */
   netsuite?: {
     /** The REST record type name, e.g. `salesOrder`. */
     restType: string;
@@ -127,9 +127,9 @@ export interface SchemaDocumentField {
   refTarget?: string;
   required?: boolean;
   values?: string[];
-  /** Provenance in NetSuite's own terms. Written by `sail schema pull`, ignored by the compiler. */
+  /** Provenance in NetSuite's own terms. Written by `mynt schema pull`, ignored by the compiler. */
   netsuite?: {
-    /** The REST property name, e.g. `companyName`; Sail's field id is the SuiteScript id. */
+    /** The REST property name, e.g. `companyName`; Mynt's field id is the SuiteScript id. */
     restName: string;
     /** The JSON Schema type the REST metadata reported. */
     restType: string;

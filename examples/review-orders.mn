@@ -17,7 +17,7 @@ scheduled {
         removeEmptyLines(order)
 
         if needsReview(order.memo) {
-            order.memo = "Reviewed by Sail"
+            order.memo = "Reviewed by Mynt"
         }
 
         save order

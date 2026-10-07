@@ -126,7 +126,7 @@ function fieldItem(field: FieldSchema, owner?: string): CompletionItem {
   };
 }
 
-function memberItemsOfType(type: import("../semantic/types.js").SailType): CompletionItem[] {
+function memberItemsOfType(type: import("../semantic/types.js").MyntType): CompletionItem[] {
   if (isRecordType(type)) return recordMemberItems(type);
   if (isLineType(type)) return [...type.sublist.fields.values()].map((field) => fieldItem(field, sublistName(type)));
   return [];
