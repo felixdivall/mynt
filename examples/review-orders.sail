@@ -1,0 +1,25 @@
+fn removeEmptyLines(order: SalesOrder) {
+    for line in order.item {
+        if line.quantity == 0 {
+            remove line
+        }
+    }
+}
+
+fn needsReview(memo: Text) -> Bool {
+    return memo == "" || memo == "TBD"
+}
+
+scheduled {
+    for row in query SalesOrder {
+        let order = load SalesOrder(row.id)
+
+        removeEmptyLines(order)
+
+        if needsReview(order.memo) {
+            order.memo = "Reviewed by Sail"
+        }
+
+        save order
+    }
+}

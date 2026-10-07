@@ -1,0 +1,8 @@
+scheduled {
+    let customer = load Customer("123")
+
+    if customer.email == "" {
+        customer.comments = "Missing email"
+        save customer
+    }
+}

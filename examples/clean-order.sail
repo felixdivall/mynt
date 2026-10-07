@@ -1,0 +1,11 @@
+scheduled {
+    let order = load SalesOrder("123")
+
+    for line in order.item {
+        if line.quantity == 0 {
+            remove line
+        }
+    }
+
+    save order
+}
