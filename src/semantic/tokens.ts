@@ -10,9 +10,20 @@
  * is a keyword only where the parser read it as one; `let where = "x"`
  * yields a variable at `where`, because that is what bound there.
  *
+ * The taxonomy an editor sees, all standard LSP types and modifiers:
+ *   fn let return if for in where to save ...   keyword
+ *   query search load create copy transform      function + defaultLibrary
+ *   log / log.debug                              namespace / method + defaultLibrary
+ *   string number boolean                        type + defaultLibrary
+ *   Customer SalesOrder                          struct
+ *   create | edit                                enumMember
+ *   true false                                   no token: the grammar's boolean capture stays
+ *
  * The kinds and modifiers are the standard LSP vocabulary so that any
  * theme can style them; nothing here encodes protocol indexes.
  */
+import { isPrimitiveTypeName } from "./types.js";
+import type { Identifier } from "../parser/ast.js";
 import type { Span } from "../diagnostics.js";
 import type {
   BuiltinReference,
@@ -23,6 +34,7 @@ import type {
   LocalDeclaration,
   LocalReference,
   LocalSymbol,
+  LookupField,
   QueryField,
   RecordIdRead,
   RecordTypeReference,
@@ -34,6 +46,7 @@ import { allBoundNodes } from "./symbols.js";
 export type TokenKind =
   | "namespace"
   | "type"
+  | "struct"
   | "parameter"
   | "variable"
   | "property"
@@ -124,11 +137,17 @@ function collectBound(doc: SemanticDocument, add: Add): void {
       case "SublistAccess":
         add((node as unknown as SublistAccess).nameSpan, "property");
         break;
+      case "LookupField": {
+        // A projected field is a field read, wherever its values come from.
+        const projected = node as unknown as LookupField;
+        add(projected.span, "property", ...(projected.field.writable ? [] : (["readonly"] as const)));
+        break;
+      }
       case "RecordIdRead":
         add((node as unknown as RecordIdRead).nameSpan, "property", "readonly");
         break;
       case "RecordTypeReference":
-        add((node as unknown as RecordTypeReference).span, "type");
+        add((node as unknown as RecordTypeReference).span, "struct");
         break;
       case "BuiltinReference": {
         const reference = node as unknown as BuiltinReference;
@@ -151,6 +170,15 @@ function collectBound(doc: SemanticDocument, add: Add): void {
 
 /** Keywords where the parser read them as keywords, literals, and signature type names. */
 function collectSyntax(doc: SemanticDocument, add: Add): void {
+  // A builtin type is a type from the default library. A schema record type
+  // is a struct: a named, structured type with a known field schema and no
+  // behavior of its own. Any other name in a type position is an error the
+  // binder reports; it stays a plain type.
+  const addTypeName = (type: Identifier): void => {
+    if (isPrimitiveTypeName(type.name)) add(type.span, "type", "defaultLibrary");
+    else if (doc.schema.getRecordByName(type.name)) add(type.span, "struct");
+    else add(type.span, "type");
+  };
   const visit = (node: TreeNode): void => {
     const n = node as Record<string, unknown> & TreeNode;
     switch (node.kind) {
@@ -169,8 +197,8 @@ function collectSyntax(doc: SemanticDocument, add: Add): void {
         break;
       case "FunctionDeclaration":
         add(n.keywordSpan as Span, "keyword");
-        for (const parameter of n.parameters as { type: TreeNode }[]) add(parameter.type.span, "type");
-        if (n.returnType) add((n.returnType as TreeNode).span, "type");
+        for (const parameter of n.parameters as { type: Identifier }[]) addTypeName(parameter.type);
+        if (n.returnType) addTypeName(n.returnType as Identifier);
         break;
       case "IfStatement":
         add(n.keywordSpan as Span, "keyword");
@@ -181,7 +209,8 @@ function collectSyntax(doc: SemanticDocument, add: Add): void {
         add(n.inSpan as Span, "keyword");
         break;
       case "QueryExpression":
-        add(n.keywordSpan as Span, "keyword");
+        // `query` is a builtin operation like `load`, not structural syntax; `where` is.
+        add(n.keywordSpan as Span, "function", "defaultLibrary");
         if (n.whereSpan) add(n.whereSpan as Span, "keyword");
         break;
       case "CallExpression":
@@ -194,8 +223,9 @@ function collectSyntax(doc: SemanticDocument, add: Add): void {
         add(node.span, "number");
         break;
       case "BoolLiteral":
-        // LSP has no standard boolean token type; keyword is how most grammars style true/false.
-        add(node.span, "keyword");
+        // LSP has no boolean token type. Emitting `keyword` here would
+        // override the grammar's boolean capture in a combined editor, so
+        // literals are left to the grammar.
         break;
       default:
         break;

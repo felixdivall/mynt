@@ -14,7 +14,8 @@ import { DiagnosticBag } from "../diagnostics.js";
 import { tokenize } from "../lexer/lexer.js";
 import type { Token } from "../lexer/tokens.js";
 import type { BoundFunction } from "../semantic/bound.js";
-import type { Builtin } from "../semantic/builtins.js";
+import { parameterTypeName, type Builtin } from "../semantic/builtins.js";
+import type { RecordSchema } from "../schema/types.js";
 import { resolveNameAt, type SemanticDocument } from "../semantic/query.js";
 import { typeName } from "../semantic/types.js";
 
@@ -53,18 +54,28 @@ export function functionSignatureInfo(fn: BoundFunction): Signature {
   return buildSignature(
     `fn ${fn.name}`,
     fn.parameters.map((p) => ({ name: p.name, type: typeName(p.type) })),
-    fn.returnType === "Void" ? "" : ` -> ${fn.returnType}`,
+    fn.returnType === "Void" ? "" : `: ${typeName(fn.returnType)}`,
   );
 }
 
 /** A built-in's signature; `subject` is the record type written before the arguments, when known. */
 export function builtinSignatureInfo(builtin: Builtin, subject?: string): Signature {
-  const parameters = builtin.parameters.map((type, i) => ({ name: builtin.parameterNames[i] ?? `arg${i + 1}`, type }));
-  if (builtin.kind === "function") return buildSignature(builtin.name, parameters, ` -> ${builtin.returns}`, builtin.summary);
+  const parameters = builtin.parameters.map((type, i) => ({ name: builtin.parameterNames[i] ?? `arg${i + 1}`, type: parameterTypeName(type) }));
+  if (builtin.kind === "function") return buildSignature(builtin.name, parameters, `: ${builtin.returns}`, builtin.summary);
   const t = subject ?? "T";
   const target = builtin.target ? " to U" : "";
   const result = builtin.returns === "subject" ? t : "U";
-  return buildSignature(`${builtin.name} ${t}`, parameters, `${target} -> ${result}`, builtin.summary);
+  return buildSignature(`${builtin.name} ${t}`, parameters, `${target}: ${result}`, builtin.summary);
+}
+
+/** `Customer(id: string | number): Ref<Customer>`: the record reference constructor. */
+export function referenceSignatureInfo(record: RecordSchema): Signature {
+  return buildSignature(
+    record.name,
+    [{ name: "id", type: parameterTypeName("RecordId") }],
+    `: Ref<${record.name}>`,
+    `A typed reference to the ${record.name} with this internal id. Nothing is loaded; read fields with [email, ...] or load ${record.name}(ref.id).`,
+  );
 }
 
 export function signatureHelpAt(doc: SemanticDocument, offset: number): SignatureHelpResult | undefined {
@@ -130,6 +141,8 @@ function resolveSignature(doc: SemanticDocument, callee: Callee, offset: number)
       const record = doc.schema.getRecordByName(callee.subject);
       return builtinSignatureInfo(resolved.builtin, record?.name);
     }
+    case "recordType":
+      return callee.subject ? undefined : referenceSignatureInfo(resolved.record);
     default:
       return undefined;
   }

@@ -1,3 +1,4 @@
+import { typeName } from "./types.js";
 /**
  * Mynt built-ins: platform functions the language understands natively.
  *
@@ -12,9 +13,29 @@
  * plus a lowering in the backend; the parser is untouched.
  */
 import type { FieldType } from "../schema/types.js";
+import type { MyntType } from "./types.js";
 
 /** SuiteScript modules the compiler knows how to depend on. */
-export type NetSuiteModule = "N/log" | "N/record" | "N/query";
+export type NetSuiteModule = "N/log" | "N/record" | "N/query" | "N/search";
+
+/**
+ * What a built-in parameter accepts. `RecordId` is an internal id, which
+ * NetSuite takes as a string or a number: `load Customer(123)` and
+ * `load Customer("123")` are both valid. It is not a Mynt type and there is
+ * no union syntax; the binder simply accepts either primitive here.
+ */
+export type BuiltinParameter = FieldType | "RecordId";
+
+/** Whether a value of `actual` may be passed where `expected` is declared. */
+export function acceptsArgument(expected: BuiltinParameter, actual: MyntType): boolean {
+  if (expected === "RecordId") return actual === "Text" || actual === "Number";
+  return actual === expected;
+}
+
+/** The spelling of a parameter in signatures and diagnostics: `string`, or `string | number` for a record id. */
+export function parameterTypeName(parameter: BuiltinParameter): string {
+  return parameter === "RecordId" ? "string | number" : typeName(parameter);
+}
 
 export type BuiltinId = "log.debug" | "log.audit" | "log.error" | "log.emergency" | "load" | "create" | "copy" | "transform";
 
@@ -25,7 +46,7 @@ interface BuiltinBase {
   /** Module whose presence in `define([...])` this built-in requires, if any. */
   module: NetSuiteModule | undefined;
   /** Types of the ordinary (parenthesised) arguments. */
-  parameters: readonly FieldType[];
+  parameters: readonly BuiltinParameter[];
   /** Names for the parameters, for signatures shown in editors. Same length as `parameters`. */
   parameterNames: readonly string[];
   /** One sentence for editors. */
@@ -92,7 +113,7 @@ const LOAD: Builtin = {
   module: "N/record",
   kind: "recordOperation",
   target: false,
-  parameters: ["Text"],
+  parameters: ["RecordId"],
   parameterNames: ["id"],
   summary: "Loads the existing record with the given internal id.",
   returns: "subject",
@@ -120,7 +141,7 @@ const COPY: Builtin = {
   module: "N/record",
   kind: "recordOperation",
   target: false,
-  parameters: ["Text"],
+  parameters: ["RecordId"],
   parameterNames: ["id"],
   summary: "Creates a new, unsaved copy of the record with the given internal id.",
   returns: "subject",
@@ -139,7 +160,7 @@ const TRANSFORM: Builtin = {
   module: "N/record",
   kind: "recordOperation",
   target: true,
-  parameters: ["Text"],
+  parameters: ["RecordId"],
   parameterNames: ["id"],
   summary: "Creates a new, unsaved record of type U from the existing record of type T with the given internal id.",
   returns: "target",
@@ -166,13 +187,13 @@ export function resolveBuiltinRoot(name: string): BuiltinSymbol | undefined {
   return undefined;
 }
 
-/** `load T(id: Text) -> T`, `create T -> T`, `transform T(id: Text) to U -> U`, `log.debug(message: Text) -> Void`. */
+/** `load T(id: string | number): T`, `create T: T`, `transform T(id: string | number) to U: U`, `log.debug(message: string): Void`. `:` reads "has type", as in parameters and user functions. */
 export function builtinSignature(builtin: Builtin): string {
-  const params = builtin.parameters.map((type, i) => `${builtin.parameterNames[i] ?? `arg${i + 1}`}: ${type}`).join(", ");
-  if (builtin.kind === "function") return `${builtin.name}(${params}) -> ${builtin.returns}`;
+  const params = builtin.parameters.map((type, i) => `${builtin.parameterNames[i] ?? `arg${i + 1}`}: ${parameterTypeName(type)}`).join(", ");
+  if (builtin.kind === "function") return `${builtin.name}(${params}): ${builtin.returns}`;
   const list = builtin.parameters.length === 0 ? "" : `(${params})`;
   const target = builtin.target ? " to U" : "";
-  return `${builtin.name} T${list}${target} -> ${builtin.returns === "subject" ? "T" : "U"}`;
+  return `${builtin.name} T${list}${target}: ${builtin.returns === "subject" ? "T" : "U"}`;
 }
 
 /** Every root name and every namespace member, for completion. */

@@ -1,0 +1,220 @@
+================================================================================
+scheduled entry point
+================================================================================
+
+scheduled {
+    log.debug("hi")
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (string)))))))
+
+================================================================================
+user event with event filter
+================================================================================
+
+beforeSubmit create | edit (customer: Customer) {
+    customer.comments = "x"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (user_event
+    hook: (hook)
+    events: (event_filter
+      event: (identifier)
+      event: (identifier))
+    parameter: (parameter
+      name: (identifier)
+      type: (type_identifier))
+    body: (block
+      (assignment
+        left: (member_expression
+          object: (identifier)
+          property: (identifier))
+        right: (string)))))
+
+================================================================================
+user event without filter
+================================================================================
+
+afterSubmit (c: Customer) {
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (user_event
+    hook: (hook)
+    parameter: (parameter
+      name: (identifier)
+      type: (type_identifier))
+    body: (block)))
+
+================================================================================
+function declaration with return type
+================================================================================
+
+fn review(customer: Customer, count: number): boolean {
+    return customer.email == ""
+}
+scheduled { }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (type_identifier))
+      (parameter
+        name: (identifier)
+        type: (primitive_type)))
+    return_type: (primitive_type)
+    body: (block
+      (return_statement
+        value: (binary_expression
+          left: (member_expression
+            object: (identifier)
+            property: (identifier))
+          right: (string)))))
+  (scheduled
+    body: (block)))
+
+================================================================================
+void function, bare return, and call statement
+================================================================================
+
+fn touch(order: SalesOrder) {
+    order.memo = "x"
+    return
+}
+scheduled {
+    let order = load SalesOrder("1")
+    touch(order)
+    save order
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (type_identifier)))
+    body: (block
+      (assignment
+        left: (member_expression
+          object: (identifier)
+          property: (identifier))
+        right: (string))
+      (return_statement)))
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))))
+      (expression_statement
+        (call_expression
+          function: (identifier)
+          arguments: (arguments
+            (identifier))))
+      (save_statement
+        target: (identifier)))))
+
+================================================================================
+comments
+================================================================================
+
+// top-level comment
+scheduled {
+    // inside
+    let c = load Customer("1") // trailing
+    save c
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (comment)
+  (scheduled
+    body: (block
+      (comment)
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))))
+      (comment)
+      (save_statement
+        target: (identifier)))))
+
+================================================================================
+function with a colon return type
+================================================================================
+
+fn needsReview(memo: string): boolean {
+    return memo == "" || memo == "TBD"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (primitive_type)))
+    return_type: (primitive_type)
+    body: (block
+      (return_statement
+        value: (binary_expression
+          left: (binary_expression
+            left: (identifier)
+            right: (string))
+          right: (binary_expression
+            left: (identifier)
+            right: (string)))))))
+
+================================================================================
+arrow return type is an error
+================================================================================
+
+fn foo() -> Text {
+}
+scheduled { }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameters)
+    (ERROR
+      (UNEXPECTED '-')
+      (identifier))
+    body: (block))
+  (scheduled
+    body: (block)))

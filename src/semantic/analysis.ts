@@ -612,6 +612,9 @@ function localUsesIn(statement: BoundStatement): LocalUse[] {
     forEachExpression(root, (expression) => {
       if (expression.kind === "FieldRead" && expression.receiver.kind === "LocalReference") {
         claim(expression.receiver, "read", expression.field);
+      } else if (expression.kind === "Lookup" && expression.receiver.kind === "LocalReference") {
+        // A projection reads every listed field at once.
+        claim(expression.receiver, "read", { id: expression.fields.map((f) => f.field.id).join(", ") });
       } else if (expression.kind === "SublistAccess" && expression.receiver.kind === "LocalReference") {
         claim(expression.receiver, "sublist", { id: expression.sublist.id });
       } else if (expression.kind === "LocalReference" && !claimed.has(expression)) {

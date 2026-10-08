@@ -479,8 +479,8 @@ describe("parser: logical operators, not, and grouping", () => {
   });
 
   it("rejects true and false as names", () => {
-    expect(parseSource(`scheduled { let true = "x" }`).diagnostics[0]!.message).toBe("'true' is a Bool literal and cannot be used as a name");
-    expect(parseSource(`beforeSubmit (false: Customer) { }`).diagnostics[0]!.message).toBe("'false' is a Bool literal and cannot be used as a name");
+    expect(parseSource(`scheduled { let true = "x" }`).diagnostics[0]!.message).toBe("'true' is a boolean literal and cannot be used as a name");
+    expect(parseSource(`beforeSubmit (false: Customer) { }`).diagnostics[0]!.message).toBe("'false' is a boolean literal and cannot be used as a name");
   });
 
   it("keeps comparisons non-associative even next to logical operators", () => {
@@ -616,7 +616,7 @@ describe("parser: query and for", () => {
     expect(message(`scheduled {\n    for customer customers { }\n}\n`)).toBe("Expected 'in' after 'for customer', found 'customers'");
     expect(message(`scheduled {\n    for customer in\n}\n`)).toBe("Expected a collection to iterate after 'in', found end of statement");
     expect(message(`scheduled {\n    for customer in customers\n    save customer\n}\n`)).toBe("Expected '{' after the for header, found end of statement");
-    expect(message(`scheduled {\n    for true in customers { }\n}\n`)).toBe("'true' is a Bool literal and cannot be used as a name");
+    expect(message(`scheduled {\n    for true in customers { }\n}\n`)).toBe("'true' is a boolean literal and cannot be used as a name");
     const unclosed = parseSource(`scheduled {\n    for customer in customers {\n        log.debug(customer.email)\n`);
     expect(unclosed.diagnostics.map((d) => d.message)).toEqual(["Expected '}' to close the for block, found end of file", "Expected '}' to close the entry point body, found end of file"]);
     expect(unclosed.ast.declarations[0]!.body.statements[0]).toMatchObject({ kind: "ForStatement", body: { statements: [{ kind: "ExpressionStatement" }] } });
@@ -662,13 +662,13 @@ describe("parser: remove and add", () => {
 
 describe("parser: functions and return", () => {
   it("parses a function with typed parameters, a return type, and a body", () => {
-    const { ast, diagnostics } = parseSource(`fn isBulk(quantity: Number, note: Text) -> Bool {\n    return quantity > 100\n}\nscheduled { }\n`);
+    const { ast, diagnostics } = parseSource(`fn isBulk(quantity: number, note: string): boolean {\n    return quantity > 100\n}\nscheduled { }\n`);
     expect(diagnostics).toEqual([]);
     expect(ast.declarations[0]).toMatchObject({
       kind: "FunctionDeclaration",
       name: { name: "isBulk" },
-      parameters: [{ name: { name: "quantity" }, type: { name: "Number" } }, { name: { name: "note" }, type: { name: "Text" } }],
-      returnType: { name: "Bool" },
+      parameters: [{ name: { name: "quantity" }, type: { name: "number" } }, { name: { name: "note" }, type: { name: "string" } }],
+      returnType: { name: "boolean" },
       body: { statements: [{ kind: "ReturnStatement", value: { kind: "BinaryExpression", operator: ">" } }] },
     });
     const { ast: voidAst } = parseSource(`fn clean(order: SalesOrder) {\n    return\n}\nscheduled { }\n`);
@@ -677,19 +677,24 @@ describe("parser: functions and return", () => {
   });
 
   it("return always begins a statement, even before a parenthesis", () => {
-    const { ast, diagnostics } = parseSource(`fn f(a: Bool, b: Bool) -> Bool {\n    return (a || b) && a\n}\nscheduled { }\n`);
+    const { ast, diagnostics } = parseSource(`fn f(a: boolean, b: boolean): boolean {\n    return (a || b) && a\n}\nscheduled { }\n`);
     expect(diagnostics).toEqual([]);
     expect(ast.declarations[0]).toMatchObject({ body: { statements: [{ kind: "ReturnStatement", value: { kind: "BinaryExpression", operator: "&&" } }] } });
   });
 
   it("reports malformed functions and recovers at the next declaration", () => {
     const message = (source: string) => parseSource(source).diagnostics[0]!.message;
-    expect(message(`fn (x: Number) { }\nscheduled { }\n`)).toBe("Expected identifier as the function name, found '('");
+    expect(message(`fn (x: number) { }\nscheduled { }\n`)).toBe("Expected identifier as the function name, found '('");
     expect(message(`fn f x { }\nscheduled { }\n`)).toBe("Expected '(' after 'fn f', found 'x'");
-    expect(message(`fn f(x Number) { }\nscheduled { }\n`)).toBe("Expected ':' after the parameter name, found 'Number'");
-    expect(message(`fn f(x: Number) -> { }\nscheduled { }\n`)).toBe("Expected identifier as the return type after '->', found '{'");
-    expect(message(`fn f(x: Number)\n    return x\nscheduled { }\n`)).toBe("Expected '{' to begin the body of 'f', found end of statement");
-    expect(message(`fn true() { }\nscheduled { }\n`)).toBe("'true' is a Bool literal and cannot be used as a name");
+    expect(message(`fn f(x number) { }\nscheduled { }\n`)).toBe("Expected ':' after the parameter name, found 'number'");
+    expect(message(`fn f(x: number): { }\nscheduled { }\n`)).toBe("Expected identifier as the return type after ':', found '{'");
+    expect(parseSource(`fn foo(): string {\n    return ""\n}\nfn bar(value: number): boolean {\n    return value > 0\n}\nscheduled { }\n`).diagnostics).toEqual([]);
+    expect(parseSource(`fn foo() -> string {\n}\nscheduled { }\n`).diagnostics.map((d) => d.message)).toEqual([
+      "Unexpected '->'; a return type is written ': Type' after the parameter list, as in 'fn name(): string'",
+      "Expected '{' to begin the body of 'foo', found 'string'",
+    ]);
+    expect(message(`fn f(x: number)\n    return x\nscheduled { }\n`)).toBe("Expected '{' to begin the body of 'f', found end of statement");
+    expect(message(`fn true() { }\nscheduled { }\n`)).toBe("'true' is a boolean literal and cannot be used as a name");
     const { ast } = parseSource(`fn broken(x: { }\nscheduled {\n    log.debug("still here")\n}\n`);
     expect(ast.declarations.map((d) => d.kind)).toEqual(["ScheduledDeclaration"]);
   });

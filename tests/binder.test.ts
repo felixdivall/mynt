@@ -39,7 +39,7 @@ describe("semantic checks", () => {
   it("MYNT1006 assignment type mismatch", () => {
     const result = compileMynt(`beforeSubmit create (o: SalesOrder) {\n    o.memo = o.total\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1006"]);
-    expect(result.diagnostics[0]!.message).toBe("Cannot assign Number to SalesOrder.memo, which is Text");
+    expect(result.diagnostics[0]!.message).toBe("Cannot assign number to SalesOrder.memo, which is string");
   });
 
   it("MYNT1006 a bare record is not a value", () => {
@@ -153,10 +153,10 @@ describe("built-ins and dependency inference", () => {
     expect(two.diagnostics[0]!.message).toBe("log.debug expects 1 argument, but received 2");
   });
 
-  it("MYNT1014 rejects a non-Text argument", () => {
+  it("MYNT1014 rejects a non-string argument", () => {
     const result = compileMynt(`beforeSubmit create (o: SalesOrder) {\n    log.debug(o.total)\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1014"]);
-    expect(result.diagnostics[0]!.message).toBe("log.debug argument 1 must be Text, but received Number");
+    expect(result.diagnostics[0]!.message).toBe("log.debug argument 1 must be string, but received number");
   });
 
   it("MYNT1012 rejects calling a namespace, a record, or a value", () => {
@@ -181,7 +181,7 @@ describe("built-ins and dependency inference", () => {
 
     const voidValue = compileMynt(`beforeSubmit create (c: Customer) {\n    c.email = log.debug("x")\n}\n`);
     expect(errorCodes(voidValue)).toEqual(["MYNT1006"]);
-    expect(voidValue.diagnostics[0]!.message).toBe("Cannot assign Void to Customer.email, which is Text");
+    expect(voidValue.diagnostics[0]!.message).toBe("Cannot assign Void to Customer.email, which is string");
   });
 
   it("MYNT1010 unknown root identifier in a scheduled script lists built-ins", () => {
@@ -376,9 +376,10 @@ describe("load, locals, and record types", () => {
     const asReceiver = compileMynt(`scheduled {\n    log.debug(Customer.email)\n}\n`);
     expect(errorCodes(asReceiver)).toEqual(["MYNT1011"]);
 
-    const called = compileMynt(`scheduled {\n    Customer("1")\n}\n`);
-    expect(errorCodes(called)).toEqual(["MYNT1012"]);
-    expect(called.diagnostics[0]!.message).toContain("Did you mean 'load Customer(...)'");
+    // `Customer("1")` is a record reference, not a call (see search.test.ts); a type argument on it still is an error.
+    const called = compileMynt(`scheduled {\n    Customer Invoice("1")\n}\n`);
+    expect(errorCodes(called)).toEqual(["MYNT1018"]);
+    expect(called.diagnostics[0]!.message).toContain("a reference is written Customer(id)");
   });
 
   it("MYNT1009 fields can only be assigned on a named record", () => {
@@ -389,10 +390,10 @@ describe("load, locals, and record types", () => {
     );
   });
 
-  it("MYNT1014 a loaded record is not a Text argument", () => {
+  it("MYNT1014 a loaded record is not a string argument", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    log.debug(c)\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1014"]);
-    expect(result.diagnostics[0]!.message).toBe("log.debug argument 1 must be Text, but received Customer");
+    expect(result.diagnostics[0]!.message).toBe("log.debug argument 1 must be string, but received Customer");
   });
 
   it("a failed initializer does not declare the local or cascade into Void", () => {
@@ -477,7 +478,7 @@ describe("record lifecycle: writes and save", () => {
   it("MYNT1006 field type checks apply to loaded records", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let o = load SalesOrder("2")\n    c.email = o.total\n    save c\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1006"]);
-    expect(result.diagnostics[0]!.message).toBe("Cannot assign Number to Customer.email, which is Text");
+    expect(result.diagnostics[0]!.message).toBe("Cannot assign number to Customer.email, which is string");
   });
 
   it("MYNT1020 saving the beforeSubmit record is rejected with the lifecycle explanation", () => {
@@ -508,11 +509,11 @@ describe("record lifecycle: writes and save", () => {
   it("MYNT1019 saving a non-record", () => {
     const local = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let e = c.email\n    save e\n}\n`);
     expect(errorCodes(local)).toEqual(["MYNT1019"]);
-    expect(local.diagnostics[0]!.message).toBe("'e' is a Text value and cannot be saved. Only records can be saved");
+    expect(local.diagnostics[0]!.message).toBe("'e' is a string value and cannot be saved. Only records can be saved");
 
     const expr = compileMynt(`scheduled {\n    let c = load Customer("1")\n    save c.email\n}\n`);
     expect(errorCodes(expr)).toEqual(["MYNT1019"]);
-    expect(expr.diagnostics[0]!.message).toBe("A Text value cannot be saved. Only records can be saved");
+    expect(expr.diagnostics[0]!.message).toBe("A string value cannot be saved. Only records can be saved");
   });
 
   it("MYNT1010 saving an unknown identifier uses the existing diagnostic", () => {
@@ -588,7 +589,7 @@ describe("MYNT2001 unsaved mutation warning", () => {
 });
 
 describe("comparisons and if", () => {
-  it("binds Text == Text to a Bool comparison with both operand types resolved", () => {
+  it("binds string == string to a boolean comparison with both operand types resolved", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n    }\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
@@ -622,7 +623,7 @@ describe("comparisons and if", () => {
     expect(last).toMatchObject({ condition: { operandType: "Number", right: { kind: "NumberLiteral", value: 10, type: "Number" } } });
   });
 
-  it("a comparison can initialize a Bool local", () => {
+  it("a comparison can initialize a boolean local", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let missing = c.email == ""\n    if missing {\n    }\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
@@ -631,53 +632,53 @@ describe("comparisons and if", () => {
     expect(unit.entryPoint.body[2]).toMatchObject({ kind: "If", condition: { kind: "LocalReference", type: "Bool" } });
   });
 
-  it("MYNT1022 rejects comparing Text with Number", () => {
+  it("MYNT1022 rejects comparing string with number", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email == 42 {\n    }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1022"]);
-    expect(result.diagnostics[0]!.message).toBe("Cannot compare Text with Number: both sides of '==' must have the same type");
+    expect(result.diagnostics[0]!.message).toBe("Cannot compare string with number: both sides of '==' must have the same type");
     expect(result.diagnostics[0]!.span).toMatchObject({ start: { line: 3, column: 8 }, end: { line: 3, column: 21 } });
   });
 
-  it("MYNT1022 rejects comparing a record with Text", () => {
+  it("MYNT1022 rejects comparing a record with string", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c == "" {\n    }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1022"]);
-    expect(result.diagnostics[0]!.message).toBe("Cannot compare Customer with Text: both sides of '==' must have the same type");
+    expect(result.diagnostics[0]!.message).toBe("Cannot compare Customer with string: both sides of '==' must have the same type");
   });
 
-  it("MYNT1023 rejects ordering Text", () => {
+  it("MYNT1023 rejects ordering string", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email < "abc" {\n    }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1023"]);
-    expect(result.diagnostics[0]!.message).toBe("'<' is not defined for Text values; ordering comparisons require Number operands");
+    expect(result.diagnostics[0]!.message).toBe("'<' is not defined for string values; ordering comparisons require number operands");
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 16 });
   });
 
   it("MYNT1023 rejects comparing records, Bools, and Void", () => {
     const records = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c == c {\n    }\n}\n`);
     expect(errorCodes(records)).toEqual(["MYNT1023"]);
-    expect(records.diagnostics[0]!.message).toBe("'==' is not defined for records (Customer); comparisons are defined for Text and Number values");
+    expect(records.diagnostics[0]!.message).toBe("'==' is not defined for records (Customer); comparisons are defined for string and number values");
 
     const bools = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let a = c.email == ""\n    if a == a {\n    }\n}\n`);
     expect(errorCodes(bools)).toEqual(["MYNT1023"]);
-    expect(bools.diagnostics[0]!.message).toContain("'==' is not defined for Bool values");
+    expect(bools.diagnostics[0]!.message).toContain("'==' is not defined for boolean values");
 
     const voids = compileMynt(`scheduled {\n    if log.debug("a") == log.debug("b") {\n    }\n}\n`);
     expect(errorCodes(voids)).toEqual(["MYNT1023"]);
     expect(voids.diagnostics[0]!.message).toContain("'==' is not defined for Void values");
   });
 
-  it("MYNT1021 if requires a Bool condition: no truthiness", () => {
+  it("MYNT1021 if requires a boolean condition: no truthiness", () => {
     const text = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email {\n    }\n}\n`);
     expect(errorCodes(text)).toEqual(["MYNT1021"]);
     expect(text.diagnostics[0]!.message).toBe(
-      "if condition must be Bool, but received Text. Mynt has no truthiness: compare the value explicitly, for example with == or !=",
+      "if condition must be boolean, but received string. Mynt has no truthiness: compare the value explicitly, for example with == or !=",
     );
     expect(text.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 8 });
 
     const record = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c {\n    }\n}\n`);
-    expect(record.diagnostics[0]!.message).toContain("if condition must be Bool, but received Customer");
+    expect(record.diagnostics[0]!.message).toContain("if condition must be boolean, but received Customer");
 
     const voidCall = compileMynt(`scheduled {\n    if log.debug("x") {\n    }\n}\n`);
-    expect(voidCall.diagnostics[0]!.message).toContain("if condition must be Bool, but received Void");
+    expect(voidCall.diagnostics[0]!.message).toContain("if condition must be boolean, but received Void");
   });
 
   it("reports errors inside both branches even when the condition is bad", () => {
@@ -832,7 +833,7 @@ describe("MYNT2001 across control flow", () => {
   });
 });
 
-describe("logical operators, not, grouping, and Bool literals", () => {
+describe("logical operators, not, grouping, and boolean literals", () => {
   function conditionOf(source: string) {
     const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
@@ -844,7 +845,7 @@ describe("logical operators, not, grouping, and Bool literals", () => {
   }
   const PRELUDE = `let c = load Customer("1")\n    let a = c.email == ""\n    let b = c.comments == ""\n`;
 
-  it("binds Bool && Bool and Bool || Bool to Logical with type Bool", () => {
+  it("binds boolean && boolean and boolean || boolean to Logical with type boolean", () => {
     expect(conditionOf(`scheduled {\n    ${PRELUDE}    if a && b { }\n}\n`)).toMatchObject({
       kind: "Logical",
       operation: "And",
@@ -855,7 +856,7 @@ describe("logical operators, not, grouping, and Bool literals", () => {
     expect(conditionOf(`scheduled {\n    ${PRELUDE}    if a || b { }\n}\n`)).toMatchObject({ kind: "Logical", operation: "Or", type: "Bool" });
   });
 
-  it("binds !Bool to Not", () => {
+  it("binds !boolean to Not", () => {
     expect(conditionOf(`scheduled {\n    ${PRELUDE}    if !a { }\n}\n`)).toMatchObject({ kind: "Not", type: "Bool", operand: { kind: "LocalReference" } });
   });
 
@@ -878,7 +879,7 @@ describe("logical operators, not, grouping, and Bool literals", () => {
     expect(conditionOf(`scheduled {\n    ${PRELUDE}    if (c.email) == "" { }\n}\n`)).toMatchObject({ kind: "Comparison", left: { kind: "FieldRead" } });
   });
 
-  it("binds true and false as Bool literals, in locals and conditions", () => {
+  it("binds true and false as boolean literals, in locals and conditions", () => {
     const result = compileMynt(`scheduled {\n    let enabled = true\n    if enabled { }\n    if false { }\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
@@ -887,43 +888,43 @@ describe("logical operators, not, grouping, and Bool literals", () => {
     expect(unit.entryPoint.body[2]).toMatchObject({ kind: "If", condition: { kind: "BoolLiteral", value: false, type: "Bool" } });
   });
 
-  it("MYNT1024 rejects non-Bool logical operands, one diagnostic per operand", () => {
+  it("MYNT1024 rejects non-boolean logical operands, one diagnostic per operand", () => {
     const left = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email && true { }\n}\n`);
     expect(errorCodes(left)).toEqual(["MYNT1024"]);
     expect(left.diagnostics[0]!.message).toBe(
-      "operator '&&' requires Bool operands, but the left operand is Text. Mynt has no truthiness: compare the value explicitly, for example with == or !=",
+      "operator '&&' requires boolean operands, but the left operand is string. Mynt has no truthiness: compare the value explicitly, for example with == or !=",
     );
     expect(left.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 8 });
 
     const both = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email || c.comments { }\n}\n`);
     expect(errorCodes(both)).toEqual(["MYNT1024", "MYNT1024"]);
-    expect(both.diagnostics[1]!.message).toContain("the right operand is Text");
+    expect(both.diagnostics[1]!.message).toContain("the right operand is string");
 
     const record = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c && true { }\n}\n`);
     expect(record.diagnostics[0]!.message).toContain("the left operand is Customer");
   });
 
-  it("MYNT1024 rejects ! on a non-Bool", () => {
+  it("MYNT1024 rejects ! on a non-boolean", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if !c.email { }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1024"]);
     expect(result.diagnostics[0]!.message).toBe(
-      "operator '!' requires Bool, but received Text. Mynt has no truthiness: compare the value explicitly, for example with == or !=",
+      "operator '!' requires boolean, but received string. Mynt has no truthiness: compare the value explicitly, for example with == or !=",
     );
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 9 });
   });
 
-  it("MYNT1023 Bool equality is rejected with a hint to use the Bool directly", () => {
+  it("MYNT1023 boolean equality is rejected with a hint to use the boolean directly", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let a = c.email == ""\n    if a == true { }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1023"]);
     expect(result.diagnostics[0]!.message).toBe(
-      "'==' is not defined for Bool values; comparisons are defined for Text and Number values. Use a Bool directly as a condition: 'if x' or 'if !x'",
+      "'==' is not defined for boolean values; comparisons are defined for string and number values. Use a boolean directly as a condition: 'if x' or 'if !x'",
     );
   });
 
   it("a grouped comparison chain fails type checking rather than parsing", () => {
     const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if (c.email == "") == c.comments { }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1022"]);
-    expect(result.diagnostics[0]!.message).toBe("Cannot compare Bool with Text: both sides of '==' must have the same type");
+    expect(result.diagnostics[0]!.message).toBe("Cannot compare boolean with string: both sides of '==' must have the same type");
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 8 });
   });
 
@@ -965,7 +966,7 @@ describe("emitter: precedence-aware parenthesization", () => {
     expect(ifLine(`!a || b`)).toBe("if (!a || b) {");
   });
 
-  it("emits strict equality and Bool literals", () => {
+  it("emits strict equality and boolean literals", () => {
     expect(ifLine(`false`)).toBe("if (false) {");
     expect(ifLine(`d || !d`)).toBe("if (d || !d) {");
     expect(ifLine(`c.email != "x"`)).toBe("if (");
@@ -1191,7 +1192,7 @@ describe("delete", () => {
     expect(errors(`scheduled {\n    delete load Customer("3")\n}\n`)).toEqual([
       "MYNT1025 Delete a named record: declare it first, like 'let x = load Customer(...)', then 'delete x'",
     ]);
-    expect(errors(`scheduled {\n    let e = "text"\n    delete e\n}\n`)).toEqual(["MYNT1019 'e' is a Text value and cannot be deleted. Only records can be deleted"]);
+    expect(errors(`scheduled {\n    let e = "text"\n    delete e\n}\n`)).toEqual(["MYNT1019 'e' is a string value and cannot be deleted. Only records can be deleted"]);
   });
 
   it("MYNT1028 rejects a double delete", () => {
@@ -1304,7 +1305,7 @@ describe("query", () => {
     expect(typeName(declaration!.kind === "LocalDeclaration" ? declaration.local.type : "Void")).toBe("Sequence<Customer>");
   });
 
-  it("supports Bool flags, negation, flipped comparisons, numbers, and captured locals", () => {
+  it("supports boolean flags, negation, flipped comparisons, numbers, and captured locals", () => {
     const result = compileMynt(
       `scheduled {\n    let wanted = "x"\n    let logs = query MyntLog where custrecord_mynt_done && !(name == wanted)\n    let orders = query SalesOrder where 100 < total\n    for l in logs { }\n    for o in orders { }\n}\n`,
     );
@@ -1329,9 +1330,9 @@ describe("query", () => {
     expect(errors(`scheduled {\n    let a = query Nope where email == "x"\n}\n`)[0]).toContain("MYNT1001 Unknown record type 'Nope'");
   });
 
-  it("rejects non-Bool, field-vs-field, and non-field conditions, and ambiguous names", () => {
+  it("rejects non-boolean, field-vs-field, and non-field conditions, and ambiguous names", () => {
     expect(errors(`scheduled {\n    let a = query Customer where comments\n}\n`)).toEqual([
-      `MYNT1021 where condition must be Bool, but received Text. Compare a field, for example 'where email != ""'`,
+      `MYNT1021 where condition must be boolean, but received string. Compare a field, for example 'where email != ""'`,
     ]);
     expect(errors(`scheduled {\n    let a = query Customer where comments == entityid\n}\n`)).toEqual([
       "MYNT1031 Unsupported query condition: a field can be compared with a value, not with another field",
@@ -1374,7 +1375,7 @@ describe("query", () => {
     expect(errors(`scheduled {\n    for a in query Customer { }\n    for a in query SalesOrder { }\n}\n`)).toEqual([]);
     expect(errors(`scheduled {\n    let c = load Customer("1")\n    for x in c { }\n    for y in "text" { }\n}\n`)).toEqual([
       "MYNT1029 Cannot iterate over a Customer value; 'for' needs a query result, like 'for x in query Customer'",
-      "MYNT1029 Cannot iterate over a Text value; 'for' needs a query result, like 'for x in query Customer'",
+      "MYNT1029 Cannot iterate over a string value; 'for' needs a query result, like 'for x in query Customer'",
     ]);
   });
 });
@@ -1449,7 +1450,7 @@ describe("sublists", () => {
     expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.itme { }\n}\n`)).toEqual(["MYNT1004 SalesOrder has no field or sublist 'itme'. Did you mean 'item'?"]);
     expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        log.debug(line.quantty)\n    }\n}\n`)).toEqual(["MYNT1004 SalesOrder.item has no field 'quantty'. Did you mean 'quantity'?"]);
     expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        line.amount = 1\n    }\n    save order\n}\n`)).toEqual(["MYNT1005 SalesOrder.item.amount is read-only and cannot be assigned"]);
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        line.quantity = "x"\n    }\n    save order\n}\n`)).toEqual(["MYNT1006 Cannot assign Text to SalesOrder.item.quantity, which is Number"]);
+    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        line.quantity = "x"\n    }\n    save order\n}\n`)).toEqual(["MYNT1006 Cannot assign string to SalesOrder.item.quantity, which is number"]);
     expect(errors(`scheduled {\n    let c = load Customer("1")\n    for line in c.item { }\n}\n`)).toEqual(["MYNT1004 Customer has no field 'item'"]);
   });
 
@@ -1472,7 +1473,7 @@ describe("sublists", () => {
       "MYNT1033 A sublist line cannot be saved independently: 'line' is a line of SalesOrder.item, persisted with its parent. Save the parent SalesOrder instead",
     ]);
     expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        delete line\n    }\n}\n`)[0]).toContain("MYNT1033 A sublist line cannot be deleted independently");
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        log.debug(line)\n    }\n}\n`)).toEqual(["MYNT1014 log.debug argument 1 must be Text, but received Line<SalesOrder.item>"]);
+    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        log.debug(line)\n    }\n}\n`)).toEqual(["MYNT1014 log.debug argument 1 must be string, but received Line<SalesOrder.item>"]);
     expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item { }\n    log.debug(line.description)\n}\n`)[0]).toContain("MYNT1010 Unknown identifier 'line'");
   });
 
@@ -1559,7 +1560,7 @@ describe("add and remove lines", () => {
 
   it("rejects remove of non-lines and add to non-sublists or unnamed records", () => {
     expect(errors(`${ORDER}    remove order\n}\n`)).toEqual(["MYNT1019 'order' is a SalesOrder value and cannot be removed. Only a sublist line from a 'for' loop can be removed"]);
-    expect(errors(`${ORDER}    add order.memo { quantity = 1 }\n}\n`)).toEqual(["MYNT1011 Cannot add a line to a Text value; 'add' needs a sublist, like 'add order.item { ... }'."]);
+    expect(errors(`${ORDER}    add order.memo { quantity = 1 }\n}\n`)).toEqual(["MYNT1011 Cannot add a line to a string value; 'add' needs a sublist, like 'add order.item { ... }'."]);
     expect(errors(`${ORDER}    add order { quantity = 1 }\n}\n`)).toEqual([
       "MYNT1011 Cannot add a line to a SalesOrder value; 'add' needs a sublist, like 'add order.item { ... }'. Name a sublist, like 'add order.item {'",
     ]);
@@ -1573,7 +1574,7 @@ describe("add and remove lines", () => {
   it("checks initializers: unknown, read-only, mistyped, duplicate, and non-initializer statements", () => {
     expect(errors(`${ORDER}    add order.item {\n        quantty = 1\n    }\n    save order\n}\n`)).toEqual(["MYNT1004 SalesOrder.item has no field 'quantty'. Did you mean 'quantity'?"]);
     expect(errors(`${ORDER}    add order.item {\n        amount = 5\n    }\n    save order\n}\n`)).toEqual(["MYNT1005 SalesOrder.item.amount is read-only and cannot be initialized"]);
-    expect(errors(`${ORDER}    add order.item {\n        quantity = "x"\n    }\n    save order\n}\n`)).toEqual(["MYNT1006 Cannot assign Text to SalesOrder.item.quantity, which is Number"]);
+    expect(errors(`${ORDER}    add order.item {\n        quantity = "x"\n    }\n    save order\n}\n`)).toEqual(["MYNT1006 Cannot assign string to SalesOrder.item.quantity, which is number"]);
     expect(errors(`${ORDER}    add order.item {\n        rate = 1\n        rate = 2\n    }\n    save order\n}\n`)).toEqual([
       "MYNT1035 SalesOrder.item.rate is initialized twice in this add block (first on line 4); a new line takes one value per field",
     ]);
@@ -1660,7 +1661,7 @@ describe("functions", () => {
   }
 
   it("binds functions, parameters with origin parameter, calls before declaration, and returns", () => {
-    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("1")\n    setMemo(order, "x")\n    if isEmpty(order.memo) {\n        save order\n    }\n    save order\n}\nfn setMemo(order: SalesOrder, memo: Text) {\n    order.memo = memo\n}\nfn isEmpty(text: Text) -> Bool {\n    return text == ""\n}\n`);
+    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("1")\n    setMemo(order, "x")\n    if isEmpty(order.memo) {\n        save order\n    }\n    save order\n}\nfn setMemo(order: SalesOrder, memo: string) {\n    order.memo = memo\n}\nfn isEmpty(text: string): boolean {\n    return text == ""\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
     expect(unit.functions.map((f) => `${f.name}:${f.returnType}`)).toEqual(["setMemo:Void", "isEmpty:Bool"]);
@@ -1679,39 +1680,39 @@ describe("functions", () => {
 
   it("reports signature problems: duplicates, reserved names, bad types, duplicate parameters", () => {
     expect(errors(`fn f() { }\nfn f() { }\nscheduled { }\n`)).toEqual(["MYNT1039 'f' is already the name of another function (line 1); choose another name for this function"]);
-    expect(errors(`fn load(x: Number) { }\nscheduled { }\n`)).toEqual(["MYNT1039 'load' is already the name of a built-in; choose another name for this function"]);
+    expect(errors(`fn load(x: number) { }\nscheduled { }\n`)).toEqual(["MYNT1039 'load' is already the name of a built-in; choose another name for this function"]);
     expect(errors(`fn Customer() { }\nscheduled { }\n`)).toEqual(["MYNT1039 'Customer' is already the name of a record type; choose another name for this function"]);
-    expect(errors(`fn f(a: Number, a: Number) { }\nscheduled { }\n`)).toEqual(["MYNT1017 'a' is already a parameter of 'f'"]);
+    expect(errors(`fn f(a: number, a: number) { }\nscheduled { }\n`)).toEqual(["MYNT1017 'a' is already a parameter of 'f'"]);
     expect(errors(`fn f(x: Nmber) { }\nscheduled { }\n`)).toEqual([
-      "MYNT1040 Unknown parameter type 'Nmber' in 'f'. Did you mean 'Number'? Parameters are Text, Number, Bool, or a record type (Customer, Invoice, MyntLog, SalesOrder)",
+      "MYNT1040 Unknown parameter type 'Nmber' in 'f'. Did you mean 'number'? Parameters are string, number, boolean, or a record type (Customer, Invoice, MyntLog, SalesOrder)",
     ]);
-    expect(errors(`fn f() -> Customer { }\nscheduled { }\n`)).toEqual(["MYNT1040 'f' cannot return a Customer: functions return Text, Number, or Bool; records flow in through parameters"]);
-    expect(errors(`fn f() -> Nope { }\nscheduled { }\n`)).toEqual(["MYNT1040 Unknown return type 'Nope'. Functions return Text, Number, or Bool"]);
+    expect(errors(`fn f(): Customer { }\nscheduled { }\n`)).toEqual(["MYNT1040 'f' cannot return a Customer: functions return string, number, or boolean; records flow in through parameters"]);
+    expect(errors(`fn f(): Nope { }\nscheduled { }\n`)).toEqual(["MYNT1040 Unknown return type 'Nope'. Functions return string, number, or boolean"]);
     expect(errors(`fn f() { }\n`)).toEqual(["MYNT1015 This file declares functions but no entry point; a Mynt file is one script, so add beforeSubmit, afterSubmit, or scheduled"]);
   });
 
   it("checks returns: missing, wrong type, value from void, and entry points", () => {
-    expect(errors(`fn f(x: Number) -> Number {\n    if x > 1 {\n        return x\n    }\n}\nscheduled { }\n`)).toEqual(["MYNT1042 'f' returns Number but not every path ends in 'return'"]);
-    expect(errors(`fn f(x: Number) -> Number {\n    if x > 1 {\n        return x\n    } else {\n        return 0\n    }\n}\nscheduled { }\n`)).toEqual([]);
-    expect(errors(`fn f(x: Number) -> Number {\n    for row in query Customer {\n        return x\n    }\n}\nscheduled { }\n`)).toEqual(["MYNT1042 'f' returns Number but not every path ends in 'return'"]);
-    expect(errors(`fn f() -> Number {\n    return "t"\n}\nscheduled { }\n`)).toEqual(["MYNT1041 Cannot return Text from 'f', which returns Number", "MYNT1042 'f' returns Number but not every path ends in 'return'"]);
-    expect(errors(`fn f() -> Number {\n    return\n}\nscheduled { }\n`)[0]).toBe("MYNT1041 'f' must return a Number value");
-    expect(errors(`fn f() {\n    return 1\n}\nscheduled { }\n`)).toEqual(["MYNT1041 'f' returns no value; remove the value or declare '-> Number'"]);
+    expect(errors(`fn f(x: number): number {\n    if x > 1 {\n        return x\n    }\n}\nscheduled { }\n`)).toEqual(["MYNT1042 'f' returns number but not every path ends in 'return'"]);
+    expect(errors(`fn f(x: number): number {\n    if x > 1 {\n        return x\n    } else {\n        return 0\n    }\n}\nscheduled { }\n`)).toEqual([]);
+    expect(errors(`fn f(x: number): number {\n    for row in query Customer {\n        return x\n    }\n}\nscheduled { }\n`)).toEqual(["MYNT1042 'f' returns number but not every path ends in 'return'"]);
+    expect(errors(`fn f(): number {\n    return "t"\n}\nscheduled { }\n`)).toEqual(["MYNT1041 Cannot return string from 'f', which returns number", "MYNT1042 'f' returns number but not every path ends in 'return'"]);
+    expect(errors(`fn f(): number {\n    return\n}\nscheduled { }\n`)[0]).toBe("MYNT1041 'f' must return a number value");
+    expect(errors(`fn f() {\n    return 1\n}\nscheduled { }\n`)).toEqual(["MYNT1041 'f' returns no value; remove the value or declare ': number'"]);
     expect(errors(`scheduled {\n    return 1\n}\n`)).toEqual(["MYNT1041 execute returns no value"]);
     expect(errors(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        return\n    }\n    log.debug(c.email)\n}\n`)).toEqual([]);
   });
 
   it("checks calls: unknown, count, types, void as value, type arguments, members, and did-you-mean", () => {
-    const PRE = `fn count(x: Number) -> Number {\n    return x\n}\nfn note(c: Customer) { }\n`;
+    const PRE = `fn count(x: number): number {\n    return x\n}\nfn note(c: Customer) { }\n`;
     expect(errors(`${PRE}scheduled {\n    cont(1)\n}\n`)[0]).toContain("MYNT1010 Unknown identifier 'cont'. Did you mean 'count'?");
-    expect(errors(`${PRE}scheduled {\n    count(1, 2)\n}\n`)).toEqual(["MYNT1013 'count' expects 1 argument (x: Number), but received 2"]);
-    expect(errors(`${PRE}scheduled {\n    count("a")\n}\n`)).toEqual(["MYNT1014 'count' parameter 'x' must be Number, but received Text"]);
+    expect(errors(`${PRE}scheduled {\n    count(1, 2)\n}\n`)).toEqual(["MYNT1013 'count' expects 1 argument (x: number), but received 2"]);
+    expect(errors(`${PRE}scheduled {\n    count("a")\n}\n`)).toEqual(["MYNT1014 'count' parameter 'x' must be number, but received string"]);
     expect(errors(`${PRE}scheduled {\n    let c = load Customer("1")\n    let v = note(c)\n}\n`)).toEqual(["MYNT1006 Cannot initialize 'v' with this expression, which returns Void"]);
-    expect(errors(`${PRE}scheduled {\n    if count(1) { }\n}\n`)[0]).toContain("MYNT1021 if condition must be Bool, but received Number");
+    expect(errors(`${PRE}scheduled {\n    if count(1) { }\n}\n`)[0]).toContain("MYNT1021 if condition must be boolean, but received number");
     expect(errors(`${PRE}scheduled {\n    count Customer(1)\n}\n`)).toEqual(["MYNT1018 'count' does not take a record type; write count(...)"]);
     expect(errors(`${PRE}scheduled {\n    count.x\n}\n`)).toEqual(["MYNT1011 'count' is a function and has no member 'x'"]);
     expect(errors(`${PRE}scheduled {\n    log.debug(count)\n}\n`)).toEqual(["MYNT1006 'count' is a function and must be called, like 'count(...)'"]);
-    expect(errors(`${PRE}scheduled {\n    let count = 1\n    log.debug(count(1))\n}\n`)[0]).toContain("'count' is a Number value and cannot be called");
+    expect(errors(`${PRE}scheduled {\n    let count = 1\n    log.debug(count(1))\n}\n`)[0]).toContain("'count' is a number value and cannot be called");
   });
 
   it("record arguments must be named records that are not query rows", () => {
@@ -1731,7 +1732,7 @@ describe("lifecycle analysis across calls", () => {
   const SET = `fn setMemo(order: SalesOrder) {\n    order.memo = "Updated"\n}\n`;
   const PERSIST = `fn persist(order: SalesOrder) {\n    order.memo = "x"\n    save order\n}\n`;
   const DROP = `fn drop(order: SalesOrder) {\n    delete order\n}\n`;
-  const MAYBE = `fn maybeSave(order: SalesOrder, flag: Bool) {\n    order.memo = "y"\n    if flag {\n        save order\n    }\n}\n`;
+  const MAYBE = `fn maybeSave(order: SalesOrder, flag: boolean) {\n    order.memo = "y"\n    if flag {\n        save order\n    }\n}\n`;
 
   it("a function that modifies its parameter leaves the caller's record pending until the caller saves", () => {
     expect(diagnostics(`${SET}scheduled {\n    let order = load SalesOrder("1")\n    setMemo(order)\n}\n`)).toEqual([
@@ -1775,7 +1776,7 @@ describe("lifecycle analysis across calls", () => {
     expect(diagnostics(`${SET}afterSubmit edit (order: SalesOrder) {\n    setMemo(order)\n}\n`)).toEqual([
       "error MYNT1044 'order' cannot be passed to 'setMemo' in afterSubmit: the function modifies it, and the SalesOrder is already saved, so the change would be silently discarded",
     ]);
-    expect(diagnostics(`fn peek(order: SalesOrder) -> Text {\n    return order.memo\n}\nafterSubmit edit (order: SalesOrder) {\n    log.debug(peek(order))\n}\n`)).toEqual([]);
+    expect(diagnostics(`fn peek(order: SalesOrder): string {\n    return order.memo\n}\nafterSubmit edit (order: SalesOrder) {\n    log.debug(peek(order))\n}\n`)).toEqual([]);
     expect(diagnostics(`${PERSIST}beforeSubmit edit (order: SalesOrder) {\n    persist(order)\n}\n`)).toEqual([
       "error MYNT1044 'order' is the SalesOrder from beforeSubmit and cannot be passed to 'persist', which saves it: NetSuite owns its persistence",
     ]);
@@ -1789,12 +1790,12 @@ describe("lifecycle analysis across calls", () => {
     expect(diagnostics(`fn leak() {\n    let c = create Customer\n    c.email = "x"\n}\nscheduled {\n    leak()\n}\n`)).toEqual([
       "warning MYNT2001 'c' is created but never saved; a new Customer does not exist in NetSuite until you 'save c'",
     ]);
-    expect(diagnostics(`fn rec(x: Number) {\n    rec(x)\n}\nscheduled {\n    rec(1)\n}\n`)).toEqual(["error MYNT1043 Recursive calls are not supported: 'rec' is called while its own body is being analyzed"]);
+    expect(diagnostics(`fn rec(x: number) {\n    rec(x)\n}\nscheduled {\n    rec(1)\n}\n`)).toEqual(["error MYNT1043 Recursive calls are not supported: 'rec' is called while its own body is being analyzed"]);
     expect(diagnostics(`fn a() {\n    b()\n}\nfn b() {\n    a()\n}\nscheduled {\n    a()\n}\n`)).toEqual(["error MYNT1043 Recursive calls are not supported: 'a' is called while its own body is being analyzed"]);
   });
 
   it("returns end a path: state after an early return is not merged into the fall-through", () => {
-    expect(diagnostics(`fn finish(order: SalesOrder, flag: Bool) {\n    if flag {\n        save order\n        return\n    }\n    order.memo = "x"\n    save order\n}\nscheduled {\n    let order = load SalesOrder("1")\n    order.memo = "a"\n    finish(order, true)\n}\n`)).toEqual([]);
+    expect(diagnostics(`fn finish(order: SalesOrder, flag: boolean) {\n    if flag {\n        save order\n        return\n    }\n    order.memo = "x"\n    save order\n}\nscheduled {\n    let order = load SalesOrder("1")\n    order.memo = "a"\n    finish(order, true)\n}\n`)).toEqual([]);
     expect(diagnostics(`scheduled {\n    let c = load Customer("1")\n    c.comments = "x"\n    if c.email == "" {\n        save c\n        return\n    }\n    log.debug(c.email)\n}\n`)).toEqual([
       "warning MYNT2001 'c' may leave this script with unsaved changes: it is modified here, but not every execution path that follows performs 'save c'",
     ]);

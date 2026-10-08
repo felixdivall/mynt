@@ -1,0 +1,17 @@
+[
+  {
+    "token_type": "type",
+    "token_modifiers": ["defaultLibrary"],
+    "style": ["type.builtin", "type"]
+  },
+  {
+    "token_type": "method",
+    "token_modifiers": ["defaultLibrary"],
+    "style": ["function.method", "function"]
+  },
+  {
+    "token_type": "namespace",
+    "token_modifiers": ["defaultLibrary"],
+    "style": ["namespace.builtin", "namespace", "type"]
+  }
+]

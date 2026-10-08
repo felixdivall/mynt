@@ -9,7 +9,7 @@
  * walking the bound nodes and comparing identity, never by spelling.
  */
 import type { Span } from "../diagnostics.js";
-import { BOOL_LITERALS, DECLARATION_KEYWORDS } from "../parser/ast.js";
+import { BOOL_LITERALS, DECLARATION_KEYWORDS, QUERY_OPERATIONS } from "../parser/ast.js";
 import type { FieldSchema, RecordSchema, SublistSchema } from "../schema/types.js";
 import type {
   BoundFunction,
@@ -21,14 +21,16 @@ import type {
   LocalDeclaration,
   LocalReference,
   LocalSymbol,
+  Lookup,
+  LookupField,
   QueryField,
   RecordTypeReference,
   SublistAccess,
 } from "./bound.js";
 import type { Builtin } from "./builtins.js";
 import { resolveName } from "./binder.js";
-import { contains, nodeAt, type SemanticDocument, type TreeNode } from "./query.js";
-import { isLineType, isRecordType, type MyntType } from "./types.js";
+import { boundPathAt, contains, type SemanticDocument, type TreeNode } from "./query.js";
+import { isLineType, isProjectionType, isRecordType, type MyntType } from "./types.js";
 
 export type SemanticSymbol =
   | { kind: "local"; local: LocalSymbol }
@@ -64,7 +66,8 @@ export function symbolName(symbol: SemanticSymbol): string {
 
 /** The symbol whose name is written at `offset`, if any. */
 export function symbolAt(doc: SemanticDocument, offset: number): SemanticSymbol | undefined {
-  const node = nodeAt(doc, offset);
+  const path = boundPathAt(doc, offset);
+  const node = path[path.length - 1];
   switch (node?.kind) {
     case "LocalReference":
       return { kind: "local", local: (node as unknown as LocalReference).local };
@@ -91,6 +94,10 @@ export function symbolAt(doc: SemanticDocument, offset: number): SemanticSymbol 
     case "QueryField": {
       const field = node as unknown as QueryField;
       return { kind: "field", record: field.record, field: field.field };
+    }
+    case "LookupField": {
+      const lookup = path[path.length - 2] as unknown as Lookup | undefined;
+      return lookup?.kind === "Lookup" ? { kind: "field", record: lookup.record, field: (node as unknown as LookupField).field } : undefined;
     }
     case "RecordTypeReference":
       return { kind: "recordType", record: (node as unknown as RecordTypeReference).record };
@@ -139,9 +146,9 @@ function initializerSymbol(doc: SemanticDocument, initializer: LineInitializer):
   return undefined;
 }
 
-/** The field symbol for a read or write through a record or a line. */
+/** The field symbol for a read or write through a record, a projection, or a line. */
 function fieldSymbol(receiverType: MyntType, field: FieldSchema): SemanticSymbol | undefined {
-  if (isRecordType(receiverType)) return { kind: "field", record: receiverType.record, field };
+  if (isRecordType(receiverType) || isProjectionType(receiverType)) return { kind: "field", record: receiverType.record, field };
   if (isLineType(receiverType)) return { kind: "field", record: receiverType.parent.record, field, sublist: receiverType.sublist };
   return undefined;
 }
@@ -237,6 +244,13 @@ export function referencesOf(doc: SemanticDocument, symbol: SemanticSymbol): Sym
         if (sameSymbol(symbol, { kind: "field", record: field.record, field: field.field })) add(field.span);
         break;
       }
+      case "Lookup": {
+        const lookup = node as unknown as Lookup;
+        for (const projected of lookup.fields) {
+          if (sameSymbol(symbol, { kind: "field", record: lookup.record, field: projected.field })) add(projected.span);
+        }
+        break;
+      }
       case "RecordTypeReference": {
         const reference = node as unknown as RecordTypeReference;
         if (sameSymbol(symbol, { kind: "recordType", record: reference.record })) add(reference.span);
@@ -262,7 +276,7 @@ export function referencesOf(doc: SemanticDocument, symbol: SemanticSymbol): Sym
 // ---- rename ----------------------------------------------------------------
 
 /** Contextual keywords and literals a local may not be named, whatever the parser would tolerate. */
-const RESERVED = new Set([...DECLARATION_KEYWORDS, "let", "if", "else", "save", "delete", "remove", "add", "for", "in", "query", "where", "return", ...BOOL_LITERALS]);
+const RESERVED = new Set([...DECLARATION_KEYWORDS, "let", "if", "else", "save", "delete", "remove", "add", "for", "in", ...QUERY_OPERATIONS, "where", "return", ...BOOL_LITERALS]);
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

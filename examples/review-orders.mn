@@ -6,7 +6,7 @@ fn removeEmptyLines(order: SalesOrder) {
     }
 }
 
-fn needsReview(memo: Text) -> Bool {
+fn needsReview(memo: string): boolean {
     return memo == "" || memo == "TBD"
 }
 

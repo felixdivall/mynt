@@ -396,7 +396,7 @@ describe("add-block symbols", () => {
 });
 
 describe("function symbols", () => {
-  const text = `fn setMemo(order: SalesOrder, memo: Text) {\n    order.memo = memo\n}\nscheduled {\n    let order = load SalesOrder("1")\n    setMemo(order, "x")\n    setMemo(order, "y")\n    save order\n}\n`;
+  const text = `fn setMemo(order: SalesOrder, memo: string) {\n    order.memo = memo\n}\nscheduled {\n    let order = load SalesOrder("1")\n    setMemo(order, "x")\n    setMemo(order, "y")\n    save order\n}\n`;
 
   it("finds references to a function from its declaration and calls, and goes to the declaration", () => {
     const doc = analyze(text, "t.mn", schema);

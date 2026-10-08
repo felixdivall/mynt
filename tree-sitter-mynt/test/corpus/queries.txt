@@ -1,0 +1,95 @@
+================================================================================
+query without where
+================================================================================
+
+scheduled {
+    let customers = query Customer
+    for c in customers { }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)))
+      (for_statement
+        variable: (identifier)
+        iterable: (identifier)
+        body: (block)))))
+
+================================================================================
+query with where on the next line
+================================================================================
+
+scheduled {
+    let customers = query Customer
+        where email != ""
+    for c in customers { }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          condition: (binary_expression
+            left: (identifier)
+            right: (string))))
+      (for_statement
+        variable: (identifier)
+        iterable: (identifier)
+        body: (block)))))
+
+================================================================================
+query with logical predicate
+================================================================================
+
+scheduled {
+    for c in query Customer where email != "" && isperson || !(comments == "x") {
+        log.debug(c.id)
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (for_statement
+        variable: (identifier)
+        iterable: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          condition: (binary_expression
+            left: (binary_expression
+              left: (binary_expression
+                left: (identifier)
+                right: (string))
+              right: (identifier))
+            right: (unary_expression
+              operand: (parenthesized_expression
+                (binary_expression
+                  left: (identifier)
+                  right: (string))))))
+        body: (block
+          (expression_statement
+            (call_expression
+              function: (member_expression
+                object: (identifier)
+                property: (identifier))
+              arguments: (arguments
+                (member_expression
+                  object: (identifier)
+                  property: (identifier))))))))))

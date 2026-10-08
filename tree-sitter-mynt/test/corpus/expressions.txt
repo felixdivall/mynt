@@ -1,0 +1,95 @@
+================================================================================
+precedence: comparison over logical, grouping, unary
+================================================================================
+
+scheduled {
+    let a = true
+    if a || a && !a == a { }
+    if (a || a) && a { }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (boolean))
+      (if_statement
+        condition: (binary_expression
+          left: (identifier)
+          right: (binary_expression
+            left: (identifier)
+            right: (binary_expression
+              left: (unary_expression
+                operand: (identifier))
+              right: (identifier))))
+        consequence: (block))
+      (if_statement
+        condition: (binary_expression
+          left: (parenthesized_expression
+            (binary_expression
+              left: (identifier)
+              right: (identifier)))
+          right: (identifier))
+        consequence: (block)))))
+
+================================================================================
+numbers, strings with escapes, booleans, semicolons
+================================================================================
+
+scheduled { let n = 2.5; let s = "a\"b\n"; let t = false }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (number))
+      (let_statement
+        name: (identifier)
+        value: (string
+          (escape_sequence)
+          (escape_sequence)))
+      (let_statement
+        name: (identifier)
+        value: (boolean)))))
+
+================================================================================
+function call as value and nested calls
+================================================================================
+
+fn f(x: number): number {
+    return x
+}
+scheduled {
+    let v = f(f(1))
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (primitive_type)))
+    return_type: (primitive_type)
+    body: (block
+      (return_statement
+        value: (identifier))))
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          arguments: (arguments
+            (call_expression
+              function: (identifier)
+              arguments: (arguments
+                (number)))))))))

@@ -23,12 +23,14 @@ import type {
   LineBinding,
   LocalSymbol,
   Logical,
+  Lookup,
   Query,
   QueryPredicate,
   ScriptUnit,
   UserEventType,
 } from "../semantic/bound.js";
-import { isLineType, isRecordType } from "../semantic/types.js";
+import type { SearchPredicate } from "../semantic/search.js";
+import { isLineType, isRecordType, isRowRecord } from "../semantic/types.js";
 import { directExpressions, forEachExpression, forEachStatement } from "../semantic/walk.js";
 import type { RecordSchema } from "../schema/types.js";
 
@@ -58,6 +60,7 @@ const MODULE_LOCAL_NAMES: Record<NetSuiteModule, string> = {
   "N/log": "log",
   "N/record": "record",
   "N/query": "query",
+  "N/search": "search",
 };
 
 /** `query.Operator` members for each Mynt comparison, on Text/Number fields. */
@@ -70,8 +73,9 @@ const QUERY_OPERATORS: Record<ComparisonOperation, string> = {
   GreaterOrEqual: "GREATER_OR_EQUAL",
 };
 
-/** The name of the emitted query helper. `$` keeps it clear of Mynt locals. */
+/** The names of the emitted query and search helpers. `$` keeps them clear of Mynt locals. */
 const QUERY_HELPER = "mynt$query";
+const SEARCH_HELPER = "mynt$search";
 
 /**
  * Mynt `==` and `!=` are semantic equality on operands the binder has already
@@ -207,6 +211,10 @@ export function emitSuiteScript(unit: ScriptUnit): string {
     emitQueryHelper(writer, moduleLocal("N/query"));
     writer.blank();
   }
+  if (usesSearch(unit)) {
+    emitSearchHelper(writer, moduleLocal("N/search"));
+    writer.blank();
+  }
 
   for (const fn of unit.functions) {
     emitFunction(writer, fn, { entryPointName: fn.name, contextName, moduleLocal, capturedId, queryColumns, line });
@@ -251,10 +259,28 @@ function emitFunction(writer: Writer, fn: BoundFunction, context: EmitContext): 
   writer.line("}");
 }
 
+/** Whether any `search` expression exists; `N/search` alone may mean only lookups. */
+function usesSearch(unit: ScriptUnit): boolean {
+  let found = false;
+  for (const body of bodies(unit)) {
+    forEachStatement(body, (statement) => {
+      for (const root of directExpressions(statement)) {
+        forEachExpression(root, (expression) => {
+          if (expression.kind === "Query" && expression.operation === "search") found = true;
+        });
+      }
+    });
+  }
+  return found;
+}
+
 /**
- * Which fields each query must fetch: every field read from a loop variable
- * iterating it. A query reached through a local (`let rows = query ...`,
- * possibly re-bound by another `let`) is resolved to its Query node.
+ * Which fields each query or search must fetch: every field read from a
+ * loop variable iterating it, whether as `row.email` or as a projection
+ * `row[email, comments]`. A query reached through a local (`let rows =
+ * query ...`, possibly re-bound by another `let`) is resolved to its Query
+ * node. Both backends are planned the same way: a search row, like a
+ * query row, is a plain object holding exactly the planned columns.
  */
 function planQueryColumns(unit: ScriptUnit): Map<Query, Set<string>> {
   const queryOf = new Map<LocalSymbol, Query>();
@@ -292,6 +318,9 @@ function collectRowFields(statement: BoundStatement, row: LocalSymbol, into: Set
       if (expression.kind === "FieldRead" && expression.receiver.kind === "LocalReference" && expression.receiver.local === row) {
         into.add(expression.field.id);
       }
+      if (expression.kind === "Lookup" && expression.receiver.kind === "LocalReference" && expression.receiver.local === row) {
+        for (const { field } of expression.fields) into.add(field.id);
+      }
     });
   }
 }
@@ -323,6 +352,41 @@ function emitQueryHelper(writer: Writer, queryModule: string): void {
   writer.line("paged.pageRanges.forEach((range) => {");
   writer.indent();
   writer.line("paged.fetch({ index: range.index }).data.results.forEach((result) => rows.push(result.asMap()));");
+  writer.dedent();
+  writer.line("});");
+  writer.line("return rows;");
+  writer.dedent();
+  writer.line("}");
+}
+
+/**
+ * The search helper: runs one search and returns every result as a plain
+ * object keyed by column, plus `id`, the same row shape the query helper
+ * produces. Results are sorted by internal id so pages are stable, and
+ * every page of `runPaged` is collected, since `run().each` stops at
+ * 4,000 results and a Mynt loop means every matching row.
+ */
+function emitSearchHelper(writer: Writer, searchModule: string): void {
+  writer.line(`function ${SEARCH_HELPER}(type, columns, filters) {`);
+  writer.indent();
+  writer.line(`const cols = columns.map((name) => ${searchModule}.createColumn({ name }));`);
+  writer.line(`const options = { type, columns: [${searchModule}.createColumn({ name: "internalid", sort: ${searchModule}.Sort.ASC }), ...cols] };`);
+  writer.line("if (filters) options.filters = filters;");
+  writer.line("const rows = [];");
+  writer.line(`const paged = ${searchModule}.create(options).runPaged({ pageSize: 1000 });`);
+  writer.line("paged.pageRanges.forEach((range) => {");
+  writer.indent();
+  writer.line("paged.fetch({ index: range.index }).data.forEach((result) => {");
+  writer.indent();
+  writer.line("const row = { id: result.id };");
+  writer.line("cols.forEach((column, index) => {");
+  writer.indent();
+  writer.line("row[columns[index]] = result.getValue(column);");
+  writer.dedent();
+  writer.line("});");
+  writer.line("rows.push(row);");
+  writer.dedent();
+  writer.line("});");
   writer.dedent();
   writer.line("});");
   writer.line("return rows;");
@@ -571,6 +635,19 @@ function emitStatement(writer: Writer, statement: BoundStatement, context: EmitC
   }
 }
 
+/**
+ * An internal id as NetSuite expects it: a string. `Customer(123)` is the
+ * canonical spelling and the AST keeps the number, but SuiteScript's `id`
+ * parameters are strings, so a numeric literal is written as the string of
+ * its digits (`"123"`), a `number`-typed expression is converted at runtime,
+ * and a string passes through as written.
+ */
+function emitRecordId(expression: BoundExpression, context: EmitContext): string {
+  if (expression.kind === "NumberLiteral") return jsString(String(expression.value));
+  if (expression.type === "Number") return `String(${emitExpression(expression, context)})`;
+  return emitOperand(expression, PRECEDENCE.Primary, context);
+}
+
 // ---- expressions -----------------------------------------------------------
 
 function emitExpression(expression: BoundExpression, context: EmitContext): string {
@@ -594,16 +671,29 @@ function emitExpression(expression: BoundExpression, context: EmitContext): stri
         ])})`;
       }
       const receiver = emitExpression(expression.receiver, context);
-      // A query row is a plain object keyed by column; a record is a Record.
-      if (isRecordType(expression.receiver.type) && expression.receiver.type.origin === "query") return `${receiver}.${expression.field.id}`;
+      // A query or search row and a projection are plain objects keyed by column; a record is a Record.
+      if (isRowRecord(expression.receiver.type) || typeof expression.receiver.type === "object" && expression.receiver.type.kind === "Projection") {
+        return `${receiver}.${expression.field.id}`;
+      }
       return `${receiver}.getValue(${objectLiteral([["fieldId", jsString(expression.field.id)]])})`;
     }
     case "SublistAccess":
       throw new Error("A sublist is lowered through the loop that iterates it, never as a value");
-    case "RecordIdRead":
-      return `${emitExpression(expression.receiver, context)}.id`;
+    case "RecordIdRead": {
+      // A row's id is already a string. A reference is its id at runtime,
+      // always a string (see emitRecordId), so `.id` is the reference itself.
+      const { receiver } = expression;
+      if (receiver.kind === "RecordReference") return emitRecordId(receiver.id, context);
+      if (typeof receiver.type === "object" && receiver.type.kind === "Reference") return emitExpression(receiver, context);
+      return `${emitExpression(receiver, context)}.id`;
+    }
+    case "RecordReference":
+      // The reference is the id itself, as a string: no object, no call.
+      return emitRecordId(expression.id, context);
+    case "Lookup":
+      return emitLookup(expression, context);
     case "Query":
-      return emitQuery(expression, context);
+      return expression.operation === "search" ? emitSearch(expression, context) : emitQuery(expression, context);
     case "QueryField":
       throw new Error("A query field is lowered through its predicate, never as an expression");
     case "BuiltinCall":
@@ -641,6 +731,68 @@ function emitQuery(query: Query, context: EmitContext): string {
   if (!query.predicate) return `${QUERY_HELPER}(${type}, ${columns})`;
   const condition = emitPredicate(query.predicate, context, q);
   return `${QUERY_HELPER}(${type}, ${columns}, (q) =>\n${INDENT}${indentTail(condition)}\n)`;
+}
+
+/**
+ * A projection. From a reference: one `lookupFields` call for exactly the
+ * projected columns; a single field is extracted from the result, several
+ * are the result object itself. From a record: `getValue` per field. From
+ * a row: the planned columns. One field is the value; several are an
+ * object keyed by field id, which is what every projected read expects.
+ */
+function emitLookup(lookup: Lookup, context: EmitContext): string {
+  const fields = lookup.fields.map((f) => f.field.id);
+  const single = fields.length === 1 ? fields[0]! : undefined;
+  switch (lookup.source) {
+    case "lookupFields": {
+      const search = context.moduleLocal("N/search");
+      const call = `${search}.lookupFields(${objectLiteral([
+        ["type", recordTypeExpression(lookup.record, search)],
+        ["id", emitExpression(lookup.receiver, context)],
+        ["columns", `[${fields.map(jsString).join(", ")}]`],
+      ])})`;
+      return single ? `${call}.${single}` : call;
+    }
+    case "record": {
+      const receiver = emitExpression(lookup.receiver, context);
+      const read = (field: string) => `${receiver}.getValue(${objectLiteral([["fieldId", jsString(field)]])})`;
+      return single ? read(single) : objectLiteral(fields.map((field) => [field, read(field)] as const));
+    }
+    case "row": {
+      const receiver = emitExpression(lookup.receiver, context);
+      return single ? `${receiver}.${single}` : objectLiteral(fields.map((field) => [field, `${receiver}.${field}`] as const));
+    }
+  }
+}
+
+function emitSearch(query: Query, context: EmitContext): string {
+  const search = context.moduleLocal("N/search");
+  const type = recordTypeExpression(query.recordType.record, search);
+  // The helper adds `id` itself; only the planned field columns are passed.
+  const columns = `[${context.queryColumns(query).filter((c) => c !== "id").map(jsString).join(", ")}]`;
+  if (!query.filter) return `${SEARCH_HELPER}(${type}, ${columns})`;
+  // A filter expression is a list of terms; a single leaf is wrapped so the shape is always the list form.
+  const filter = emitSearchFilter(query.filter, context, search);
+  return call(SEARCH_HELPER, [type, columns, query.filter.kind === "Filter" ? `[${filter}]` : filter]);
+}
+
+/**
+ * A search predicate as an N/search filter expression: a leaf is
+ * `[field, operator, value]`, and `and`/`or` join two expressions. The
+ * operator is the enum member, whose value is the string the expression
+ * form takes. Empty checks carry an empty value, as the operator ignores it.
+ */
+function emitSearchFilter(predicate: SearchPredicate, context: EmitContext, search: string): string {
+  switch (predicate.kind) {
+    case "And":
+    case "Or":
+      return `[\n${INDENT}${indentTail(emitSearchFilter(predicate.left, context, search))},\n${INDENT}${jsString(predicate.kind === "And" ? "and" : "or")},\n${INDENT}${indentTail(emitSearchFilter(predicate.right, context, search))}\n]`;
+    case "Filter": {
+      const { value } = predicate;
+      const literal = !value ? jsString("") : value.kind === "Constant" ? (typeof value.value === "string" ? jsString(value.value) : String(value.value)) : value.local.name;
+      return `[${jsString(predicate.field.id)}, ${search}.Operator.${predicate.operator}, ${literal}]`;
+    }
+  }
 }
 
 /** `name(a, b)` on one line, or one argument per line when any is multi-line. */
@@ -719,7 +871,7 @@ const loadLowering: Lowering = (call, context) => {
   const record = context.moduleLocal("N/record");
   return `${record}.load(${objectLiteral([
     ["type", recordTypeExpression(call.recordType!.record, record)],
-    ["id", emitExpression(call.arguments[0]!, context)],
+    ["id", emitRecordId(call.arguments[0]!, context)],
   ])})`;
 };
 
@@ -732,7 +884,7 @@ const copyLowering: Lowering = (call, context) => {
   const record = context.moduleLocal("N/record");
   return `${record}.copy(${objectLiteral([
     ["type", recordTypeExpression(call.recordType!.record, record)],
-    ["id", emitExpression(call.arguments[0]!, context)],
+    ["id", emitRecordId(call.arguments[0]!, context)],
   ])})`;
 };
 
@@ -740,7 +892,7 @@ const transformLowering: Lowering = (call, context) => {
   const record = context.moduleLocal("N/record");
   return `${record}.transform(${objectLiteral([
     ["fromType", recordTypeExpression(call.recordType!.record, record)],
-    ["fromId", emitExpression(call.arguments[0]!, context)],
+    ["fromId", emitRecordId(call.arguments[0]!, context)],
     ["toType", recordTypeExpression(call.targetType!.record, record)],
   ])})`;
 };

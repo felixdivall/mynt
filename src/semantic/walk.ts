@@ -57,7 +57,11 @@ export function forEachExpression(expression: BoundExpression, visit: (expressio
     case "FieldRead":
     case "RecordIdRead":
     case "SublistAccess":
+    case "Lookup":
       forEachExpression(expression.receiver, visit);
+      break;
+    case "RecordReference":
+      forEachExpression(expression.id, visit);
       break;
     case "BuiltinCall":
     case "FunctionCall":

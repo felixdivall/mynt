@@ -8,22 +8,24 @@
 import { DiagnosticBag, type Span } from "../diagnostics.js";
 import { tokenize } from "../lexer/lexer.js";
 import type { Token } from "../lexer/tokens.js";
-import { DECLARATION_KEYWORDS, USER_EVENT_HOOKS } from "../parser/ast.js";
+import { DECLARATION_KEYWORDS, QUERY_OPERATIONS, USER_EVENT_HOOKS } from "../parser/ast.js";
 import type { NameResolution } from "../semantic/binder.js";
 
 export type CompletionContext =
   | { kind: "topLevel" }
   | { kind: "eventName" }
   | { kind: "recordType" }
-  /** A function parameter's type: Text, Number, Bool, or a record type. */
+  /** A function parameter's type: string, number, boolean, or a record type. */
   | { kind: "parameterType" }
   | { kind: "returnType" }
   /** After a `.`: where the dot is, and the identifier chain before it when the receiver is one. */
   | { kind: "member"; dotOffset: number; receiver: string[] }
   | { kind: "statement" }
   | { kind: "expression" }
-  /** Inside `query T where ...`: bare names are T's fields, plus captured locals. */
+  /** Inside `query T where ...` or `search T where ...`: bare names are T's fields, plus captured locals. */
   | { kind: "queryField"; record: string }
+  /** Inside `receiver[...]`: where the bracket is, the receiver's identifier chain when it is one, and the fields already listed. */
+  | { kind: "projectionField"; bracketOffset: number; receiver: string[]; listed: string[] }
   /** At a statement position inside `add parent.sublist { ... }`: the sublist's fields. */
   | { kind: "lineInitializer"; parent: string; sublist: string }
   | { kind: "none" };
@@ -56,17 +58,50 @@ export function completionSite(text: string, offset: number, resolve: (name: str
   return { context: classify(before, resolve), prefix, replace };
 }
 
+/** Whether a token is `query` or `search`. */
+function isQueryOperation(token: Token | undefined): boolean {
+  return token?.kind === "Identifier" && (QUERY_OPERATIONS as readonly string[]).includes(token.text);
+}
+
 /**
- * The record of the `query T where ...` the cursor is inside, if any: the
- * last `query T` with a `where` after it and no statement boundary since
- * (a terminator that is not immediately followed by `where`).
+ * If the cursor is inside an open `[...]`, the projection being typed: the
+ * innermost unmatched `[` on this statement, the identifier chain before
+ * it when the receiver is one, and the field names listed so far.
+ */
+function projectionInProgress(before: Token[]): CompletionContext | undefined {
+  let open = -1;
+  for (let i = before.length - 1; i >= 0; i--) {
+    const kind = before[i]!.kind;
+    if (kind === "RBracket" || kind === "Terminator" || kind === "LBrace" || kind === "RBrace") return undefined;
+    if (kind === "LBracket") {
+      open = i;
+      break;
+    }
+  }
+  if (open < 0) return undefined;
+  const listed = before.slice(open + 1).filter((t) => t.kind === "Identifier").map((t) => t.text);
+  const receiver: string[] = [];
+  let i = open - 1;
+  while (i >= 0 && before[i]!.kind === "Identifier") {
+    receiver.unshift(before[i]!.text);
+    if (i >= 1 && before[i - 1]!.kind === "Dot") i -= 2;
+    else break;
+  }
+  return { kind: "projectionField", bracketOffset: before[open]!.span.start.offset, receiver, listed };
+}
+
+/**
+ * The record of the `query T where ...` or `search T where ...` the cursor
+ * is inside, if any: the last `query T` with a `where` after it and no
+ * statement boundary since (a terminator that is not immediately followed
+ * by `where`).
  */
 function queryRecordInScope(before: Token[]): string | undefined {
   let record: string | undefined;
   let inWhere = false;
   for (let i = 0; i < before.length; i++) {
     const t = before[i]!;
-    if (t.kind === "Identifier" && t.text === "query" && before[i + 1]?.kind === "Identifier") {
+    if (isQueryOperation(t) && before[i + 1]?.kind === "Identifier") {
       record = before[i + 1]!.text;
       inWhere = false;
       i++;
@@ -131,6 +166,9 @@ function classify(before: Token[], resolve: (name: string) => NameResolution | u
     return { kind: "member", dotOffset: last.span.start.offset, receiver };
   }
 
+  const projection = depth > 0 ? projectionInProgress(before) : undefined;
+  if (projection) return projection;
+
   if (depth <= 0) {
     if (!last || last.kind === "Terminator" || last.kind === "RBrace") return { kind: "topLevel" };
     // Inside a declaration header: find its keyword.
@@ -148,8 +186,9 @@ function classify(before: Token[], resolve: (name: string) => NameResolution | u
       return last.kind === "RParen" ? { kind: "none" } : { kind: "eventName" };
     }
     if (keyword === "fn") {
-      if (last.kind === "Arrow") return { kind: "returnType" };
-      if (parens > 0 && last.kind === "Colon") return { kind: "parameterType" };
+      // ':' reads "has type" in both positions: inside the parentheses it
+      // types a parameter, after them it types the function's result.
+      if (last.kind === "Colon") return { kind: parens > 0 ? "parameterType" : "returnType" };
     }
     return { kind: "none" };
   }
@@ -159,7 +198,7 @@ function classify(before: Token[], resolve: (name: string) => NameResolution | u
     return add ?? { kind: "statement" };
   }
 
-  if (last.kind === "Identifier" && last.text === "query") return { kind: "recordType" };
+  if (isQueryOperation(last)) return { kind: "recordType" };
   const queried = queryRecordInScope(before);
   if (queried) {
     if (last.kind === "Identifier" && last.text === "where") return { kind: "queryField", record: queried };

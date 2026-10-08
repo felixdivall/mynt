@@ -8,7 +8,9 @@
 import type { Span } from "../diagnostics.js";
 import type { FieldSchema, FieldType, RecordSchema, SublistSchema } from "../schema/types.js";
 import type { Builtin, NetSuiteModule } from "./builtins.js";
-import type { MyntType, SequenceType, SublistType } from "./types.js";
+import type { SearchPredicate } from "./search.js";
+import type { MyntType, ProjectionType, ReferenceType, SequenceType, SublistType } from "./types.js";
+import type { QueryOperation } from "../parser/ast.js";
 
 export type ScriptUnit = UserEventUnit | ScheduledUnit;
 
@@ -286,6 +288,8 @@ export type BoundExpression =
   | FieldRead
   | SublistAccess
   | RecordIdRead
+  | RecordReference
+  | Lookup
   | QueryField
   | Query
   | BuiltinCall
@@ -308,12 +312,64 @@ export interface SublistAccess {
   span: Span;
 }
 
-/** `customer.id` on a query row: the record's internal id, a language property rather than a schema field. */
+/**
+ * `customer.id` on a query or search row, or on a record reference: the
+ * record's internal id, a language property rather than a schema field.
+ * Always a string, whatever the reference was constructed from.
+ */
 export interface RecordIdRead {
   kind: "RecordIdRead";
   receiver: BoundExpression;
   nameSpan: Span;
   type: "Text";
+  span: Span;
+}
+
+/**
+ * `Customer(123)` / `Customer("123")`: a typed reference to one record. The
+ * id is a string or number expression; the value performs no NetSuite work.
+ * At runtime the reference is the id itself, which is what every N/search
+ * and N/record call that takes an id accepts.
+ */
+export interface RecordReference {
+  kind: "RecordReference";
+  recordType: RecordTypeReference;
+  id: BoundExpression;
+  type: ReferenceType;
+  span: Span;
+}
+
+/**
+ * Where a projection's values come from, decided by the receiver's type:
+ *
+ *   lookupFields  a record reference: one `N/search.lookupFields` call
+ *                 fetches exactly the projected columns, without loading;
+ *   record        a loaded, created, context, or parameter record: local
+ *                 `getValue` reads, no NetSuite call;
+ *   row           a query or search row: local reads of columns the
+ *                 backend already fetched, which the column planner adds.
+ */
+export type LookupSource = "lookupFields" | "record" | "row";
+
+/** One projected field, where it is written. */
+export interface LookupField {
+  kind: "LookupField";
+  field: FieldSchema;
+  span: Span;
+}
+
+/**
+ * `receiver[field, ...]`, validated against the schema. One field yields
+ * that field's value directly; several yield a projection holding exactly
+ * those fields. Whatever the source, one projection is one fetch.
+ */
+export interface Lookup {
+  kind: "Lookup";
+  receiver: BoundExpression;
+  record: RecordSchema;
+  fields: LookupField[];
+  source: LookupSource;
+  type: FieldType | ProjectionType;
   span: Span;
 }
 
@@ -342,15 +398,20 @@ export type QueryPredicate =
 export type QueryValue = { kind: "Constant"; value: string | number | boolean } | { kind: "Local"; local: LocalSymbol };
 
 /**
- * `query Customer where ...`: an executed query whose value is the
- * materialized result. `condition` is the bound expression as written, for
- * tooling; `predicate` is what the backend lowers.
+ * `query Customer where ...` or `search Customer where ...`: an executed
+ * query whose value is the materialized result. `condition` is the bound
+ * expression as written, for tooling; `predicate` is the backend-neutral
+ * form of it. For a search, `filter` is the predicate translated into
+ * N/search terms, which the emitter lowers; a query lowers `predicate`
+ * directly. Only the programmer's `operation` decides the backend.
  */
 export interface Query {
   kind: "Query";
+  operation: QueryOperation;
   recordType: RecordTypeReference;
   condition: BoundExpression | undefined;
   predicate: QueryPredicate | undefined;
+  filter: SearchPredicate | undefined;
   type: SequenceType;
   span: Span;
 }

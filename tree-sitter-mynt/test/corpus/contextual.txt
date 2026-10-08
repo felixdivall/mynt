@@ -1,0 +1,121 @@
+================================================================================
+contextual words as local names
+================================================================================
+
+scheduled {
+    let where = "x"
+    let query = where
+    let to = query
+    let in = to
+    let save = in
+    log.debug(save)
+    log.debug(c.where)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (string))
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (identifier))))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (member_expression
+              object: (identifier)
+              property: (identifier))))))))
+
+================================================================================
+contextual words as members
+================================================================================
+
+scheduled {
+    let c = load Customer("1")
+    log.debug(c.query)
+    log.debug(c.where)
+    log.debug(c.save)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (member_expression
+              object: (identifier)
+              property: (identifier)))))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (member_expression
+              object: (identifier)
+              property: (identifier)))))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (member_expression
+              object: (identifier)
+              property: (identifier))))))))
+
+================================================================================
+event names are identifiers
+================================================================================
+
+beforeSubmit create | edit | xedit (customer: Customer) { }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (user_event
+    hook: (hook)
+    events: (event_filter
+      event: (identifier)
+      event: (identifier)
+      event: (identifier))
+    parameter: (parameter
+      name: (identifier)
+      type: (type_identifier))
+    body: (block)))

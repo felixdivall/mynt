@@ -83,6 +83,12 @@ export const DiagnosticCode = {
   MissingReturn: "MYNT1042",
   RecursionNotSupported: "MYNT1043",
   ArgumentOrigin: "MYNT1044",
+  InvalidRecordId: "MYNT1045",
+  ReadOnlyReference: "MYNT1046",
+  DuplicateProjectionField: "MYNT1047",
+  ProjectionOnNonRecord: "MYNT1048",
+  UnsupportedSearchCondition: "MYNT1049",
+  FieldNotProjected: "MYNT1050",
   UnsavedMutation: "MYNT2001",
 } as const;
 

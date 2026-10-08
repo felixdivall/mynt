@@ -1,0 +1,122 @@
+================================================================================
+let without a value
+================================================================================
+
+scheduled {
+    let customer =
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (MISSING identifier)))))
+
+================================================================================
+dangling member access
+================================================================================
+
+scheduled {
+    let customer = load Customer("1")
+    customer.
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))))
+      (expression_statement
+        (identifier))
+      (ERROR))))
+
+================================================================================
+unclosed call
+================================================================================
+
+scheduled {
+    load Customer(
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (expression_statement
+        (call_expression
+          function: (identifier)
+          type: (type_identifier)))
+      (ERROR))))
+
+================================================================================
+for without iterable
+================================================================================
+
+scheduled {
+    for customer in
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (ERROR
+        (identifier)))))
+
+================================================================================
+function with incomplete parameter
+================================================================================
+
+fn foo(value:
+scheduled { }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    name: (identifier)
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (type_identifier))
+      (MISSING ")"))
+    body: (block)))
+
+================================================================================
+unclosed add block
+================================================================================
+
+scheduled {
+    let order = create SalesOrder
+    add order.item {
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)))
+      (add_statement
+        sublist: (member_expression
+          object: (identifier)
+          property: (identifier))
+        body: (block
+          (MISSING "}")))
+      (MISSING "}"))))
+

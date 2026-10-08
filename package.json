@@ -1,5 +1,5 @@
 {
-  "name": "mynt",
+  "name": "@felixdivall/mynt",
   "version": "0.0.1",
   "description": "Mynt: a semantic source language that compiles to SuiteScript 2.1",
   "license": "UNLICENSED",
@@ -31,7 +31,11 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "mynt": "tsx src/cli/main.ts",
-    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
+    "grammar": "pnpm --dir tree-sitter-mynt run",
+    "grammar:generate": "pnpm --dir tree-sitter-mynt run generate",
+    "grammar:test": "pnpm --dir tree-sitter-mynt run test",
+    "zed:dev": "node scripts/zed-dev.mjs"
   },
   "dependencies": {
     "vscode-languageserver": "^10.1.2",

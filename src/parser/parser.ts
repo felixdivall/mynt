@@ -1,6 +1,7 @@
 import { DiagnosticBag, DiagnosticCode, spanFrom, type Span } from "../diagnostics.js";
 import { tokenize } from "../lexer/lexer.js";
 import type { Token, TokenKind } from "../lexer/tokens.js";
+import { isPrimitiveTypeName } from "../semantic/types.js";
 import {
   BOOL_LITERALS,
   DECLARATION_KEYWORDS,
@@ -21,7 +22,10 @@ import {
   type LetStatement,
   type NumberLiteral,
   type Parameter,
+  type ProjectionExpression,
   type QueryExpression,
+  type QueryOperation,
+  QUERY_OPERATIONS,
   type RemoveStatement,
   type ReturnStatement,
   type SaveStatement,
@@ -52,6 +56,8 @@ const TOKEN_DESCRIPTIONS: Record<TokenKind, string> = {
   RParen: "')'",
   LBrace: "'{'",
   RBrace: "'}'",
+  LBracket: "'['",
+  RBracket: "']'",
   Pipe: "'|'",
   Colon: "':'",
   Dot: "'.'",
@@ -62,7 +68,6 @@ const TOKEN_DESCRIPTIONS: Record<TokenKind, string> = {
   Bang: "'!'",
   AmpAmp: "'&&'",
   PipePipe: "'||'",
-  Arrow: "'->'",
   Less: "'<'",
   LessEquals: "'<='",
   Greater: "'>'",
@@ -108,10 +113,13 @@ const EXPRESSION_START = new Set<TokenKind>(["Identifier", "String", "Number", "
  */
 const EXPRESSION_CONTINUATION = new Set<TokenKind>(["Dot", "Equals", ...(Object.keys(BINARY_OPERATORS) as TokenKind[])]);
 
-/** `order.item` for a hint, or `...` for anything more complex. */
+/** `order.item` or `Customer(...)` for a hint, or `...` for anything more complex. */
 function describeExpression(expression: Expression): string {
   if (expression.kind === "Identifier") return expression.name;
   if (expression.kind === "MemberExpression") return `${describeExpression(expression.object)}.${expression.property.name}`;
+  if (expression.kind === "CallExpression") {
+    return `${describeExpression(expression.callee)}${expression.typeArgument ? ` ${expression.typeArgument.name}` : ""}(...)`;
+  }
   return "...";
 }
 
@@ -127,7 +135,7 @@ function describe(token: Token): string {
  *
  *   File        := Declaration*
  *   Declaration := UserEvent | Scheduled | Function
- *   Function    := "fn" Identifier "(" (Parameter ("," Parameter)*)? ")" ("->" Identifier)? Block
+ *   Function    := "fn" Identifier "(" (Parameter ("," Parameter)*)? ")" (":" Identifier)? Block
  *   UserEvent   := Hook EventFilter? "(" Parameter ")" Block
  *   Hook        := "beforeSubmit" | "afterSubmit"
  *   Scheduled   := "scheduled" Block
@@ -148,17 +156,21 @@ function describe(token: Token): string {
  *   Binary      := Unary (BinaryOperator Unary)*            (precedence climbing; see BINARY_OPERATORS)
  *   BinaryOperator := "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
  *   Unary       := "!" Unary | Postfix
- *   Postfix     := Primary ("." Identifier | TypeArgument ("(" Arguments ")")? ("to" TypeArgument)? | "(" Arguments ")")*
+ *   Postfix     := Primary ("." Identifier | TypeArgument ("(" Arguments ")")? ("to" TypeArgument)? | "(" Arguments ")" | Projection)*
+ *   Projection  := "[" Identifier ("," Identifier)* "]"
  *   TypeArgument:= Identifier
  *   Arguments   := (Expression ("," Expression)*)?
  *   Primary     := Identifier | String | Number | "true" | "false" | "(" Expression ")" | Query
- *   Query       := "query" Identifier (Terminator? "where" Expression)?
+ *   Query       := ("query" | "search") Identifier (Terminator? "where" Expression)?
  *
  * Declaration keywords, `let`, `save`, `if`, `else`, event names, and built-in
  * names are contextual: they are ordinary identifiers that the parser
  * (declarations, `let`, `save`, `if`) and binder (events, built-ins such as
  * `log` and `load`, record types such as `Customer`) interpret by position.
  * `true` and `false` are literals wherever an expression is expected.
+ * `Customer(123)` is syntactically a call whose callee is a bare name; the
+ * binder reads it as a record reference because `Customer` is a record type.
+ * Brackets exist only for projections: `[` after an expression names fields.
  */
 export function parse(source: string, file: string, diagnostics: DiagnosticBag): SourceFile {
   const tokens = tokenize(source, diagnostics);
@@ -312,9 +324,9 @@ class Parser {
     }
     this.expect("RParen", "to close the parameter list");
     let returnType: Identifier | undefined;
-    if (this.at("Arrow")) {
+    if (this.at("Colon")) {
       this.next();
-      returnType = this.parseIdentifier("as the return type after '->'");
+      returnType = this.parseIdentifier("as the return type after ':'");
     }
     if (!this.at("LBrace")) {
       this.fail(`Expected '{' to begin the body of '${name.name}', found ${describe(this.peek())}`, this.peek().span);
@@ -566,9 +578,9 @@ class Parser {
     return { kind: "ForStatement", keywordSpan: keyword.span, variable, inSpan, iterable, body, span: spanFrom(keyword.span, body.span) };
   }
 
-  private parseQuery(): QueryExpression {
+  private parseQuery(operation: QueryOperation): QueryExpression {
     const keyword = this.next();
-    const recordType = this.parseIdentifier("as the record type to query");
+    const recordType = this.parseIdentifier(`as the record type to ${operation}`);
     let condition: Expression | undefined;
     let whereSpan: Span | undefined;
     // `where` may start the next line: look past one terminator for it.
@@ -584,6 +596,7 @@ class Parser {
     }
     return {
       kind: "QueryExpression",
+      operation,
       keywordSpan: keyword.span,
       recordType,
       whereSpan,
@@ -630,7 +643,7 @@ class Parser {
         span: spanFrom(left.span, right.span),
       };
 
-      // Comparisons do not chain: `a == b == c` compares a Bool with c, which
+      // Comparisons do not chain: `a == b == c` compares a boolean with c, which
       // is never what was meant.
       const next = BINARY_OPERATORS[this.peek().kind];
       if (entry.associativity === "none" && next && next.precedence === entry.precedence) {
@@ -721,6 +734,8 @@ class Parser {
           toSpan: undefined,
           span: spanFrom(expression.span, end),
         };
+      } else if (this.at("LBracket")) {
+        expression = this.parseProjection(expression);
       } else if (this.at("String") && this.peek(1).kind === "LParen") {
         // `load "Customer"("123")`: a quoted name where a record type belongs.
         const token = this.peek();
@@ -732,6 +747,41 @@ class Parser {
       } else {
         return expression;
       }
+    }
+  }
+
+  /**
+   * `receiver[field, field]`. A projection that is cut short (`x[`, `x[email,`
+   * at the end of a line) is reported and kept with the fields read so far,
+   * so the receiver still binds and completion can offer its fields.
+   */
+  private parseProjection(receiver: Expression): ProjectionExpression {
+    const open = this.next();
+    const fields: Identifier[] = [];
+    const incomplete = (found: Token): ProjectionExpression => {
+      this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected ']' to close the field list, found ${describe(found)}`, found.span);
+      return { kind: "ProjectionExpression", receiver, fields, openSpan: open.span, closeSpan: undefined, span: spanFrom(receiver.span, fields[fields.length - 1]?.span ?? open.span) };
+    };
+    if (this.at("RBracket")) {
+      this.fail(`Expected at least one field inside '[...]', like ${describeExpression(receiver)}[email]`, this.peek().span);
+    }
+    for (;;) {
+      if (this.at("String")) {
+        const token = this.peek();
+        this.fail(`Expected a field name inside '[...]', found string ${token.text}. Fields are written without quotes, like [${token.value ?? "email"}]`, token.span);
+      }
+      if (this.at("Terminator") || this.at("EOF") || this.at("RBrace")) return incomplete(this.peek());
+      fields.push(this.parseIdentifier("as a field name inside '[...]'"));
+      if (this.at("Comma")) {
+        this.next();
+        continue;
+      }
+      if (this.at("RBracket")) {
+        const close = this.next();
+        return { kind: "ProjectionExpression", receiver, fields, openSpan: open.span, closeSpan: close.span, span: spanFrom(receiver.span, close.span) };
+      }
+      if (this.at("Terminator") || this.at("EOF") || this.at("RBrace")) return incomplete(this.peek());
+      this.fail(`Expected ',' or ']' after the field name, found ${describe(this.peek())}`, this.peek().span);
     }
   }
 
@@ -756,7 +806,9 @@ class Parser {
       const literal: BoolLiteral = { kind: "BoolLiteral", value: token.text === "true", span: token.span };
       return literal;
     }
-    if (token.kind === "Identifier" && token.text === "query" && this.peek(1).kind === "Identifier") return this.parseQuery();
+    if (token.kind === "Identifier" && (QUERY_OPERATIONS as readonly string[]).includes(token.text) && this.peek(1).kind === "Identifier") {
+      return this.parseQuery(token.text as QueryOperation);
+    }
     if (token.kind === "Identifier") return this.parseIdentifier();
     if (token.kind === "LParen") {
       // Grouping. No node survives: the inner expression keeps its structure
@@ -793,7 +845,10 @@ class Parser {
   private parseBindingName(context: string): Identifier {
     const name = this.parseIdentifier(context);
     if (BOOL_LITERALS.includes(name.name)) {
-      this.fail(`'${name.name}' is a Bool literal and cannot be used as a name`, name.span);
+      this.fail(`'${name.name}' is a boolean literal and cannot be used as a name`, name.span);
+    }
+    if (isPrimitiveTypeName(name.name)) {
+      this.fail(`'${name.name}' is a builtin type and cannot be used as a name`, name.span);
     }
     return name;
   }

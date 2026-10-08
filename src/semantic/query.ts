@@ -91,6 +91,11 @@ function boundRoots(doc: SemanticDocument): TreeNode[] {
   return roots;
 }
 
+/** The chain of bound nodes containing `offset`, outermost first. */
+export function boundPathAt(doc: SemanticDocument, offset: number): TreeNode[] {
+  return pathAt(boundRoots(doc), offset);
+}
+
 /**
  * The innermost bound node at `offset`: a statement, an expression, or a
  * reference (BuiltinReference, RecordTypeReference). Expressions inside a
@@ -98,7 +103,7 @@ function boundRoots(doc: SemanticDocument): TreeNode[] {
  * table.
  */
 export function nodeAt(doc: SemanticDocument, offset: number): TreeNode | undefined {
-  const path = pathAt(boundRoots(doc), offset);
+  const path = boundPathAt(doc, offset);
   return path[path.length - 1];
 }
 

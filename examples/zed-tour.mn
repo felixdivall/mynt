@@ -1,0 +1,81 @@
+// Editor tour: one script that contains every construct the Zed
+// verification checklist looks at. It compiles like any other example.
+//
+// The taxonomy to look for:
+//   fn let return if for where to   keyword
+//   query search load create copy transform builtin operation
+//   string number boolean            builtin type
+//   Customer SalesOrder Invoice      record type
+//   true false                       boolean literal
+//   email memo quantity              property
+
+fn needsReview(memo: string): boolean {
+    return memo == "" || memo == "TBD"
+}
+
+fn calculate(value: number, multiplier: number): number {
+    return value
+}
+
+fn review(order: SalesOrder): boolean {
+    order.memo = "Reviewed"
+    return true
+}
+
+fn label(customer: Customer): string {
+    return customer.entityid
+}
+
+beforeSubmit create | edit (order: SalesOrder) {
+    // Contextual words in identifier positions stay variables.
+    let where = "x"
+    let query = where
+    let save = query
+    log.debug(save)
+
+    // Query syntax: keyword positions, query fields, a multi-line where.
+    let customers = query Customer
+        where email != "" &&
+            comments != ""
+
+    for row in customers {
+        let customer = load Customer(row.id)
+        log.debug(customer.email)
+        log.debug(label(customer))
+        customer.comments = "Seen by Mynt"
+        save customer
+    }
+
+    // A record reference, single- and multi-field lookups, and a search.
+    let reference = Customer(123)
+    let address = reference[email]
+    let info = Customer("123")[email, comments]
+    log.debug(info.comments)
+    for found in search Customer where email != "" {
+        log.debug(found.id)
+    }
+
+    // The other builtin operations, each followed by a record type.
+    let fresh = create Customer
+    fresh.email = "new@example.com"
+    save fresh
+    let duplicate = copy Customer("123")
+    save duplicate
+    let invoice = transform SalesOrder("123") to Invoice
+    save invoice
+
+    // Sublist, line variable, and line fields.
+    for line in order.item {
+        if line.quantity == 0 {
+            remove line
+        }
+    }
+
+    // Function calls, a number, boolean literals, and operators.
+    if needsReview(order.memo) && !false {
+        order.memo = "Reviewed by Mynt"
+    }
+    let scaled = calculate(order.total, 2)
+    let reviewed = review(order)
+    log.debug(order.memo)
+}

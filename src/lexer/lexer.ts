@@ -6,7 +6,6 @@ const PUNCTUATION: Record<string, TokenKind> = {
   "==": "EqualsEquals",
   "!=": "BangEquals",
   "&&": "AmpAmp",
-  "->": "Arrow",
   "||": "PipePipe",
   "!": "Bang",
   "<=": "LessEquals",
@@ -17,6 +16,8 @@ const PUNCTUATION: Record<string, TokenKind> = {
   ")": "RParen",
   "{": "LBrace",
   "}": "RBrace",
+  "[": "LBracket",
+  "]": "RBracket",
   "|": "Pipe",
   ":": "Colon",
   ".": "Dot",
@@ -28,7 +29,7 @@ const PUNCTUATION: Record<string, TokenKind> = {
  * Tokens after which a newline ends a statement. This is Go's rule: a newline
  * terminates a statement when the previous token could end one.
  */
-const TERMINATES_ON_NEWLINE = new Set<TokenKind>(["Identifier", "String", "Number", "RParen", "RBrace"]);
+const TERMINATES_ON_NEWLINE = new Set<TokenKind>(["Identifier", "String", "Number", "RParen", "RBrace", "RBracket"]);
 
 function isIdentifierStart(ch: string): boolean {
   return /[A-Za-z_]/.test(ch);
@@ -184,6 +185,11 @@ export function tokenize(source: string, diagnostics: DiagnosticBag): Token[] {
 
     const start = position();
     advance();
+    if (ch === "-" && source[offset] === ">") {
+      advance();
+      diagnostics.error(DiagnosticCode.SyntaxError, "Unexpected '->'; a return type is written ': Type' after the parameter list, as in 'fn name(): string'", { start, end: position() });
+      continue;
+    }
     diagnostics.error(DiagnosticCode.SyntaxError, `Unexpected character '${ch}'`, {
       start,
       end: position(),

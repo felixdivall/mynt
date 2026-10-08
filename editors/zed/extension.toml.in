@@ -1,0 +1,19 @@
+# Template. `pnpm zed:dev` renders extension.toml from it, filling in the
+# local grammar repository and commit; the rendered file is not tracked.
+# When tree-sitter-mynt is pushed to GitHub, replace the two placeholders
+# with the repository URL and a commit SHA and track extension.toml itself.
+id = "mynt"
+name = "Mynt"
+description = "Mynt: a semantic language for NetSuite that compiles to SuiteScript. Syntax via Tree-sitter, semantics via `mynt lsp`."
+version = "0.0.1"
+schema_version = 1
+authors = ["Felix Divall <felixdivall@gmail.com>"]
+repository = "https://github.com/felixdivall/mynt"
+
+[grammars.mynt]
+repository = "@GRAMMAR_REPOSITORY@"
+commit = "@GRAMMAR_COMMIT@"
+
+[language_servers.mynt]
+name = "Mynt Language Server"
+languages = ["Mynt"]

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "mynt",
+      "camelcase": "Mynt",
+      "scope": "source.mynt",
+      "path": ".",
+      "file-types": ["mn"],
+      "injection-regex": "^mynt$"
+    }
+  ],
+  "metadata": {
+    "version": "0.0.1",
+    "license": "UNLICENSED",
+    "description": "Mynt grammar for Tree-sitter",
+    "authors": [{ "name": "Felix Divall", "email": "felixdivall@gmail.com" }],
+    "links": { "repository": "https://github.com/felixdivall/tree-sitter-mynt" }
+  }
+}

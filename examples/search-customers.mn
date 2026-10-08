@@ -1,0 +1,15 @@
+// A real N/search when discovery is required: `search` is the N/search
+// backend, as `query` is the N/query backend. Rows are read-only; to change
+// a record, load it by the row's id.
+scheduled {
+    let customers = search Customer
+        where email != "" &&
+            comments == ""
+
+    for row in customers {
+        log.debug(row.email)
+        let customer = load Customer(row.id)
+        customer.comments = "Reviewed by Mynt"
+        save customer
+    }
+}

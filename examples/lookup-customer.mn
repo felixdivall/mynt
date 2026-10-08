@@ -1,0 +1,17 @@
+// Reference a known record and read only the fields you need. Nothing is
+// loaded: Customer(123) is a typed reference, and [...] fetches exactly the
+// named fields through one N/search.lookupFields call.
+scheduled {
+    let customer = Customer(123)
+    let email = customer[email]
+    log.debug(email)
+
+    let info = customer[email, comments]
+    log.debug(info.comments)
+
+    if info.email == "" {
+        let record = load Customer(customer.id)
+        record.email = "unknown@example.com"
+        save record
+    }
+}

@@ -1,8 +1,10 @@
+import { PRIMITIVE_TYPE_NAMES } from "../semantic/types.js";
 import { CompletionItemKind, InsertTextFormat, type CompletionItem } from "vscode-languageserver";
 import { USER_EVENT_TYPES } from "../semantic/bound.js";
 import { builtinSignature, listBuiltinRoots, type BuiltinSymbol } from "../semantic/builtins.js";
+import { QUERY_OPERATIONS } from "../parser/ast.js";
 import { expressionEndingAt, localsInScopeAt, resolveNameAt, type SemanticDocument } from "../semantic/query.js";
-import { isLineType, isRecordType, sublistName, type RecordType } from "../semantic/types.js";
+import { isLineType, isProjectionType, isRecordType, isReferenceType, isRowOrigin, sublistName, type MyntType, type RecordType } from "../semantic/types.js";
 import type { SublistSchema } from "../schema/types.js";
 import type { FieldSchema, RecordSchema } from "../schema/types.js";
 import { completionSite, type CompletionContext } from "./context.js";
@@ -24,6 +26,8 @@ function itemsFor(doc: SemanticDocument, offset: number, context: CompletionCont
       return doc.schema.listRecords().map(recordItem);
     case "member":
       return memberItems(doc, context.dotOffset, context.receiver);
+    case "projectionField":
+      return projectionFieldItems(doc, context.bracketOffset, context.receiver, context.listed);
     case "statement":
       return [...statementItems(), ...localItems(doc, offset), ...functionItems(doc), ...builtinItems()];
     case "parameterType":
@@ -35,8 +39,8 @@ function itemsFor(doc: SemanticDocument, offset: number, context: CompletionCont
         ...localItems(doc, offset),
         ...functionItems(doc),
         ...builtinItems(),
-        { label: "true", kind: CompletionItemKind.Keyword, detail: "Bool" },
-        { label: "false", kind: CompletionItemKind.Keyword, detail: "Bool" },
+        { label: "true", kind: CompletionItemKind.Keyword, detail: "boolean" },
+        { label: "false", kind: CompletionItemKind.Keyword, detail: "boolean" },
       ];
     case "lineInitializer": {
       const resolved = resolveNameAt(doc, context.parent, offset);
@@ -51,8 +55,8 @@ function itemsFor(doc: SemanticDocument, offset: number, context: CompletionCont
       return [
         ...(record ? [...record.fields.values()].map((field) => fieldItem(field)) : []),
         ...localItems(doc, offset),
-        { label: "true", kind: CompletionItemKind.Keyword, detail: "Bool" },
-        { label: "false", kind: CompletionItemKind.Keyword, detail: "Bool" },
+        { label: "true", kind: CompletionItemKind.Keyword, detail: "boolean" },
+        { label: "false", kind: CompletionItemKind.Keyword, detail: "boolean" },
       ];
     }
     case "none":
@@ -77,11 +81,14 @@ function declarationItems(recordName: string): CompletionItem[] {
     snippet("afterSubmit", `afterSubmit \${1:edit} (\${2:record}: \${3:${recordName}}) {\n\t$0\n}`, "user event entry point"),
     snippet("scheduled", "scheduled {\n\t$0\n}", "scheduled script entry point"),
     snippet("fn", "fn ${1:name}(${2:record}: ${3:" + recordName + "}) {\n\t$0\n}", "function"),
+    snippet("fn", "fn ${1:name}(${2:value}: ${3:string}): ${4:string} {\n\t$0\n}", "function returning a value"),
   ];
 }
 
 function primitiveTypeItems(): CompletionItem[] {
-  return ["Text", "Number", "Bool"].map((label) => ({ label, kind: CompletionItemKind.TypeParameter, detail: "type" }));
+  // Builtin types complete as keywords, record types as classes, so an editor
+  // lists language primitives and schema records with different icons.
+  return PRIMITIVE_TYPE_NAMES.map((label) => ({ label, kind: CompletionItemKind.Keyword, detail: "builtin type" }));
 }
 
 function functionItems(doc: SemanticDocument): CompletionItem[] {
@@ -111,7 +118,7 @@ function statementItems(): CompletionItem[] {
 function recordItem(record: RecordSchema): CompletionItem {
   return {
     label: record.name,
-    kind: CompletionItemKind.Class,
+    kind: CompletionItemKind.Struct,
     detail: record.custom ? "custom record" : "record",
     documentation: recordDetail(record),
   };
@@ -126,17 +133,23 @@ function fieldItem(field: FieldSchema, owner?: string): CompletionItem {
   };
 }
 
-function memberItemsOfType(type: import("../semantic/types.js").MyntType): CompletionItem[] {
+function memberItemsOfType(type: MyntType): CompletionItem[] {
   if (isRecordType(type)) return recordMemberItems(type);
   if (isLineType(type)) return [...type.sublist.fields.values()].map((field) => fieldItem(field, sublistName(type)));
+  // A reference has only its id; its fields are reached with `[...]`.
+  if (isReferenceType(type)) {
+    return [{ label: "id", kind: CompletionItemKind.Property, detail: "string · internal id", documentation: `Internal id of the referenced ${type.record.name}; read fields with 'ref[email, ...]' or load it with 'load ${type.record.name}(ref.id)'` }];
+  }
+  // A projection has exactly the fields it was made with.
+  if (isProjectionType(type)) return type.fields.map((field) => fieldItem(field, type.record.name));
   return [];
 }
 
-/** A record's fields, plus `id` on a query row, plus its sublists on a loaded or context record. */
+/** A record's fields, plus `id` on a query or search row, plus its sublists on a loaded or context record. */
 function recordMemberItems(type: RecordType): CompletionItem[] {
   const items = [...type.record.fields.values()].map((field) => fieldItem(field));
-  if (type.origin === "query") {
-    items.unshift({ label: "id", kind: CompletionItemKind.Property, detail: "Text · internal id", documentation: `Internal id of the ${type.record.name}, for 'load ${type.record.name}(row.id)'` });
+  if (isRowOrigin(type.origin)) {
+    items.unshift({ label: "id", kind: CompletionItemKind.Property, detail: "string · internal id", documentation: `Internal id of the ${type.record.name}, for 'load ${type.record.name}(row.id)'` });
   } else {
     items.push(...[...type.record.sublists.values()].map((sublist) => sublistItem(type, sublist)));
   }
@@ -158,8 +171,18 @@ function builtinItem(symbol: BuiltinSymbol): CompletionItem {
     : { label: symbol.builtin.name, kind: CompletionItemKind.Function, detail: builtinSignature(symbol.builtin) };
 }
 
+/** `query` and `search` are operations of the language, not registry built-ins; they complete beside `load` and the rest. */
+function queryOperationItems(): CompletionItem[] {
+  return QUERY_OPERATIONS.map((operation) => ({
+    label: operation,
+    kind: CompletionItemKind.Function,
+    detail: `${operation} T where ...: Sequence<T>`,
+    documentation: `Rows of T from ${operation === "query" ? "N/query" : "N/search"}, read-only; the backend is the one you name`,
+  }));
+}
+
 function builtinItems(): CompletionItem[] {
-  return listBuiltinRoots().map(builtinItem);
+  return [...queryOperationItems(), ...listBuiltinRoots().map(builtinItem)];
 }
 
 function localItems(doc: SemanticDocument, offset: number): CompletionItem[] {
@@ -168,6 +191,24 @@ function localItems(doc: SemanticDocument, offset: number): CompletionItem[] {
     kind: CompletionItemKind.Variable,
     detail: describeLocal(local),
   }));
+}
+
+/**
+ * Fields inside `receiver[...]`: the record's fields, from the bound
+ * receiver (a reference, a record, or a row) or, when the receiver did not
+ * bind, from a single name resolved as a local. Fields already listed in
+ * the brackets are left out, since a projection names each field once.
+ */
+function projectionFieldItems(doc: SemanticDocument, bracketOffset: number, receiver: string[], listed: string[]): CompletionItem[] {
+  let type: MyntType | undefined = expressionEndingAt(doc, bracketOffset)?.type;
+  if (!type && receiver.length === 1) {
+    const resolved = resolveNameAt(doc, receiver[0]!, bracketOffset);
+    if (resolved?.kind === "local") type = resolved.local.type;
+  }
+  if (!type) return [];
+  const record = isReferenceType(type) || isRecordType(type) ? type.record : undefined;
+  if (!record) return [];
+  return [...record.fields.values()].filter((field) => !listed.includes(field.id)).map((field) => fieldItem(field, record.name));
 }
 
 /**

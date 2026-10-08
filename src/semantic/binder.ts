@@ -14,7 +14,9 @@ import type {
   IfStatement,
   LetStatement,
   MemberExpression,
+  ProjectionExpression,
   QueryExpression,
+  QueryOperation,
   RemoveStatement,
   ReturnStatement,
   SaveStatement,
@@ -25,9 +27,11 @@ import type {
   UserEventDeclaration,
 } from "../parser/ast.js";
 import type { SchemaProvider } from "../schema/provider.js";
-import type { RecordSchema, SublistSchema } from "../schema/types.js";
+import type { FieldSchema, RecordSchema, SublistSchema } from "../schema/types.js";
 import {
+  acceptsArgument,
   builtinRootNames,
+  parameterTypeName,
   resolveBuiltinRoot,
   type Builtin,
   type BuiltinNamespace,
@@ -49,30 +53,45 @@ import {
   type ComparisonOperation,
   type LocalSymbol,
   type Logical,
+  type Lookup,
+  type LookupField,
+  type LookupSource,
   type Query,
   type QueryPredicate,
   type SublistAccess,
   type QueryValue,
+  type RecordReference,
   type RecordTypeReference,
   type ScopedLocal,
   type ScriptUnit,
   type UserEventType,
 } from "./bound.js";
+import { toSearchPredicate } from "./search.js";
 import { suggest } from "./suggest.js";
 import {
   isLineType,
+  isProjectionType,
   isRecordType,
+  isReferenceType,
+  isRowOrigin,
   isSequenceType,
   isSublistType,
+  PRIMITIVE_TYPE_NAMES,
+  primitiveTypeNamed,
+  projectionType,
   recordType as makeRecordType,
+  referenceType,
+  rowLabel,
   sameType,
   sequenceType,
   sublistName,
   sublistType,
-  typeName,
   type LineType,
-  type RecordType,
   type MyntType,
+  type ProjectionType,
+  type RecordType,
+  type ReferenceType,
+  typeName,
 } from "./types.js";
 import type { FieldType } from "../schema/types.js";
 
@@ -464,8 +483,8 @@ class Binder {
         this.diagnostics.error(
           DiagnosticCode.InvalidSignatureType,
           known
-            ? `'${name}' cannot return a ${known.name}: functions return Text, Number, or Bool; records flow in through parameters`
-            : `Unknown return type '${declaration.returnType.name}'. Functions return Text, Number, or Bool`,
+            ? `'${name}' cannot return a ${known.name}: functions return string, number, or boolean; records flow in through parameters`
+            : `Unknown return type '${declaration.returnType.name}'. Functions return string, number, or boolean`,
           declaration.returnType.span,
         );
       }
@@ -477,22 +496,22 @@ class Binder {
   }
 
   private resolveValueTypeName(name: string): FieldType | "Bool" | undefined {
-    return name === "Text" || name === "Number" || name === "Bool" ? name : undefined;
+    return primitiveTypeNamed(name);
   }
 
-  /** Text, Number, Bool, or a record type. Lines, sublists, and query results cannot be parameters. */
+  /** string, number, boolean, or a record type. Lines, sublists, and query results cannot be parameters. */
   private resolveParameterType(type: Identifier, functionName: string): MyntType | undefined {
     const value = this.resolveValueTypeName(type.name);
     if (value) return value;
     const record = this.schema.getRecordByName(type.name);
     if (record) return makeRecordType(record, "parameter");
     const known = this.schema.listRecords().map((r) => r.name).sort();
-    const hint = suggest(type.name, ["Text", "Number", "Bool", ...known]);
+    const hint = suggest(type.name, [...PRIMITIVE_TYPE_NAMES, ...known]);
     this.diagnostics.error(
       DiagnosticCode.InvalidSignatureType,
       `Unknown parameter type '${type.name}' in '${functionName}'. ` +
         (hint ? `Did you mean '${hint}'? ` : "") +
-        `Parameters are Text, Number, Bool, or a record type (${known.join(", ")})`,
+        `Parameters are string, number, boolean, or a record type (${known.join(", ")})`,
       type.span,
     );
     return undefined;
@@ -510,7 +529,7 @@ class Binder {
     if (fn.returnType !== "Void" && !definitelyReturns(fn.body)) {
       this.diagnostics.error(
         DiagnosticCode.MissingReturn,
-        `'${fn.name}' returns ${fn.returnType} but not every path ends in 'return'`,
+        `'${fn.name}' returns ${typeName(fn.returnType)} but not every path ends in 'return'`,
         declaration.name.span,
       );
     }
@@ -524,7 +543,7 @@ class Binder {
       if (value) {
         this.diagnostics.error(
           DiagnosticCode.ReturnMismatch,
-          scope.functionName ? `'${scope.functionName}' returns no value; remove the value or declare '-> ${typeName(value.type)}'` : `${where} returns no value`,
+          scope.functionName ? `'${scope.functionName}' returns no value; remove the value or declare ': ${typeName(value.type)}'` : `${where} returns no value`,
           statement.value!.span,
         );
         return undefined;
@@ -712,6 +731,11 @@ class Binder {
       return this.bindLineAssignment(statement, object.type, object.bound, boundValue, scope);
     }
 
+    if (object.kind === "value" && (isReferenceType(object.type) || isProjectionType(object.type))) {
+      this.reportReadOnlyWrite(object.type, object.bound, target.property.name, statement.span);
+      return undefined;
+    }
+
     if (object.kind !== "value" || !isRecordType(object.type)) {
       this.diagnostics.error(
         DiagnosticCode.InvalidAssignmentTarget,
@@ -749,10 +773,10 @@ class Binder {
       return undefined;
     }
 
-    if (object.type.origin === "query") {
+    if (isRowOrigin(object.type.origin)) {
       this.diagnostics.error(
         DiagnosticCode.ReadOnlyQueryResult,
-        `Query result '${receiver.local.name}' is read-only. Load the record before modifying it: ` +
+        `${rowLabel(object.type.origin)} '${receiver.local.name}' is read-only. Load the record before modifying it: ` +
           `'let x = load ${record.name}(${receiver.local.name}.id)', then assign 'x.${field.id}'`,
         statement.span,
       );
@@ -766,7 +790,7 @@ class Binder {
     if (!sameType(boundValue.type, field.type)) {
       this.diagnostics.error(
         DiagnosticCode.TypeMismatch,
-        `Cannot assign ${typeName(boundValue.type)} to ${record.name}.${field.id}, which is ${field.type}`,
+        `Cannot assign ${typeName(boundValue.type)} to ${record.name}.${field.id}, which is ${typeName(field.type)}`,
         value.span,
       );
       return undefined;
@@ -884,7 +908,7 @@ class Binder {
       if (!sameType(value.type, field.type)) {
         this.diagnostics.error(
           DiagnosticCode.TypeMismatch,
-          `Cannot assign ${typeName(value.type)} to ${owner}.${field.id}, which is ${field.type}`,
+          `Cannot assign ${typeName(value.type)} to ${owner}.${field.id}, which is ${typeName(field.type)}`,
           item.value.span,
         );
         continue;
@@ -920,7 +944,7 @@ class Binder {
     if (!sameType(boundValue.type, field.type)) {
       this.diagnostics.error(
         DiagnosticCode.TypeMismatch,
-        `Cannot assign ${typeName(boundValue.type)} to ${owner}.${field.id}, which is ${field.type}`,
+        `Cannot assign ${typeName(boundValue.type)} to ${owner}.${field.id}, which is ${typeName(field.type)}`,
         statement.value.span,
       );
       return undefined;
@@ -933,6 +957,10 @@ class Binder {
     const bound = this.bindValue(target, scope);
     if (!bound) return undefined;
     if (isRecordType(bound.type)) return bound;
+    if (isReferenceType(bound.type) || isProjectionType(bound.type)) {
+      this.reportReadOnlyWrite(bound.type, bound, verb, target.span);
+      return undefined;
+    }
     if (isLineType(bound.type)) {
       const parent = bound.type.parent.record.name;
       const name = bound.kind === "LocalReference" ? bound.local.name : "the line";
@@ -959,7 +987,7 @@ class Binder {
     if (!target || !isRecordType(target.type)) return undefined;
     const record = target.type.record.name;
 
-    if (target.type.origin === "query") {
+    if (isRowOrigin(target.type.origin)) {
       this.reportQueryRowOperation(target, "deleted", statement.span);
       return undefined;
     }
@@ -985,11 +1013,11 @@ class Binder {
   }
 
   private reportQueryRowOperation(target: BoundExpression, verb: "saved" | "deleted", span: Span): void {
-    if (!isRecordType(target.type)) return;
+    if (!isRecordType(target.type) || !isRowOrigin(target.type.origin)) return;
     const name = target.kind === "LocalReference" ? target.local.name : "it";
     this.diagnostics.error(
       DiagnosticCode.ReadOnlyQueryResult,
-      `Query result '${name}' cannot be ${verb}: a query row is a read-only view. ` +
+      `${rowLabel(target.type.origin)} '${name}' cannot be ${verb}: a ${target.type.origin} row is a read-only view. ` +
         `Load the record first: 'let x = load ${target.type.record.name}(${name}.id)', then '${verb === "saved" ? "save" : "delete"} x'`,
       span,
     );
@@ -999,7 +1027,7 @@ class Binder {
     const target = this.bindRecordTarget(statement.target, "saved", scope);
     if (!target || !isRecordType(target.type)) return undefined;
 
-    if (target.type.origin === "query") {
+    if (isRowOrigin(target.type.origin)) {
       this.reportQueryRowOperation(target, "saved", statement.span);
       return undefined;
     }
@@ -1093,7 +1121,7 @@ class Binder {
       // No truthiness: "" / 0 / a record reference are not conditions.
       this.diagnostics.error(
         DiagnosticCode.ConditionNotBool,
-        `if condition must be Bool, but received ${typeName(condition.type)}. ` +
+        `if condition must be boolean, but received ${typeName(condition.type)}. ` +
           `Mynt has no truthiness: compare the value explicitly, for example with == or !=`,
         statement.condition.span,
       );
@@ -1146,7 +1174,7 @@ class Binder {
         this.diagnostics.error(
           DiagnosticCode.TypeMismatch,
           `'${denotation.record.name}' is a record type, not a value. ` +
-            `Did you mean to load one, like 'load ${denotation.record.name}(...)'?`,
+            `Did you mean to load one, like 'load ${denotation.record.name}(...)', or to reference one by id, like ${denotation.record.name}(123)?`,
           expression.span,
         );
         return undefined;
@@ -1227,6 +1255,9 @@ class Binder {
       case "QueryExpression":
         return this.denoteQuery(expression, scope);
 
+      case "ProjectionExpression":
+        return this.denoteProjection(expression, scope);
+
       case "UnaryExpression":
         return this.denoteNot(expression, scope);
     }
@@ -1246,7 +1277,7 @@ class Binder {
         ok = false;
         this.diagnostics.error(
           DiagnosticCode.LogicalOperandNotBool,
-          `operator '${operator}' requires Bool operands, but the ${side} operand is ${typeName(operand.type)}. ` +
+          `operator '${operator}' requires boolean operands, but the ${side} operand is ${typeName(operand.type)}. ` +
             `Mynt has no truthiness: compare the value explicitly, for example with == or !=`,
           syntax.span,
         );
@@ -1271,7 +1302,7 @@ class Binder {
     if (operand.type !== "Bool") {
       this.diagnostics.error(
         DiagnosticCode.LogicalOperandNotBool,
-        `operator '!' requires Bool, but received ${typeName(operand.type)}. ` +
+        `operator '!' requires boolean, but received ${typeName(operand.type)}. ` +
           `Mynt has no truthiness: compare the value explicitly, for example with == or !=`,
         expression.operand.span,
       );
@@ -1309,11 +1340,11 @@ class Binder {
       const what = isRecordType(operandType) ? `records (${operandType.record.name})` : `${typeName(operandType)} values`;
       const hint =
         operandType === "Bool" && (operator === "==" || operator === "!=")
-          ? `. Use a Bool directly as a condition: 'if x' or 'if !x'`
+          ? `. Use a boolean directly as a condition: 'if x' or 'if !x'`
           : "";
       this.diagnostics.error(
         DiagnosticCode.UnsupportedComparison,
-        `'${operator}' is not defined for ${what}; comparisons are defined for Text and Number values${hint}`,
+        `'${operator}' is not defined for ${what}; comparisons are defined for string and number values${hint}`,
         expression.operatorSpan,
       );
       return undefined;
@@ -1322,7 +1353,7 @@ class Binder {
     if (ordering && operandType !== "Number") {
       this.diagnostics.error(
         DiagnosticCode.UnsupportedComparison,
-        `'${operator}' is not defined for ${operandType} values; ordering comparisons require Number operands`,
+        `'${operator}' is not defined for ${typeName(operandType)} values; ordering comparisons require number operands`,
         expression.operatorSpan,
       );
       return undefined;
@@ -1341,40 +1372,52 @@ class Binder {
   }
 
   /**
-   * `query Customer where ...`: the condition is bound like any expression,
-   * in a scope where bare names are the record's fields, and then
-   * translated into a backend-neutral predicate. The value is the executed
-   * result, a Sequence of query rows.
+   * `query Customer where ...` / `search Customer where ...`: the condition
+   * is bound like any expression, in a scope where bare names are the
+   * record's fields, and then translated into a backend-neutral predicate.
+   * A search additionally translates that predicate into N/search terms,
+   * which may reject shapes N/search cannot express. The value is the
+   * executed result, a Sequence of rows of the chosen backend.
    */
   private denoteQuery(expression: QueryExpression, scope: Scope): Denotation | undefined {
     const record = this.resolveRecordTypeName(expression.recordType);
+    const { operation } = expression;
     let condition: BoundExpression | undefined;
     let predicate: QueryPredicate | undefined;
+    let filter: Query["filter"];
     if (record && expression.condition) {
       condition = this.bindValue(expression.condition, scope.conditionScope(record, expression.condition.span));
       if (!condition) return undefined;
       if (condition.type !== "Bool") {
         this.diagnostics.error(
           DiagnosticCode.ConditionNotBool,
-          `where condition must be Bool, but received ${typeName(condition.type)}. Compare a field, for example 'where email != ""'`,
+          `where condition must be boolean, but received ${typeName(condition.type)}. Compare a field, for example 'where email != ""'`,
           expression.condition.span,
         );
         return undefined;
       }
-      predicate = this.toPredicate(condition, expression.condition);
+      predicate = this.toPredicate(condition, operation);
       if (!predicate) return undefined;
+      if (operation === "search") {
+        filter = toSearchPredicate(predicate, (why) =>
+          this.diagnostics.error(DiagnosticCode.UnsupportedSearchCondition, `Unsupported search condition: ${why}`, expression.condition!.span),
+        );
+        if (!filter) return undefined;
+      }
     } else if (expression.condition) {
       this.bindValue(expression.condition, scope); // report its errors even without a record
     }
     if (!record) return undefined;
-    this.dependencies.add("N/query");
+    this.dependencies.add(operation === "query" ? "N/query" : "N/search");
 
-    const type = sequenceType(record);
+    const type = sequenceType(record, operation);
     const query: Query = {
       kind: "Query",
+      operation,
       recordType: { kind: "RecordTypeReference", record, span: expression.recordType.span },
       condition,
       predicate,
+      filter,
       type,
       span: expression.span,
     };
@@ -1382,21 +1425,25 @@ class Binder {
   }
 
   /** The predicate shapes the backends can express. Anything else is reported, never approximated. */
-  private toPredicate(condition: BoundExpression, syntax: Expression): QueryPredicate | undefined {
+  private toPredicate(condition: BoundExpression, operation: QueryOperation): QueryPredicate | undefined {
     const unsupported = (why: string, span: Span = condition.span): undefined => {
-      this.diagnostics.error(DiagnosticCode.UnsupportedQueryCondition, `Unsupported query condition: ${why}`, span);
+      this.diagnostics.error(
+        operation === "query" ? DiagnosticCode.UnsupportedQueryCondition : DiagnosticCode.UnsupportedSearchCondition,
+        `Unsupported ${operation} condition: ${why}`,
+        span,
+      );
       return undefined;
     };
     switch (condition.kind) {
       case "QueryField":
         return condition.type === "Bool" ? { kind: "Flag", field: condition.field, value: true } : unsupported(`'${condition.field.id}' is not a Bool field`);
       case "Not": {
-        const operand = this.toPredicate(condition.operand, syntax);
+        const operand = this.toPredicate(condition.operand, operation);
         return operand && { kind: "Not", operand };
       }
       case "Logical": {
-        const left = this.toPredicate(condition.left, syntax);
-        const right = this.toPredicate(condition.right, syntax);
+        const left = this.toPredicate(condition.left, operation);
+        const right = this.toPredicate(condition.right, operation);
         return left && right ? { kind: condition.operation === "And" ? "And" : "Or", left, right } : undefined;
       }
       case "Comparison": {
@@ -1416,7 +1463,7 @@ class Binder {
         return { kind: "Compare", field: fieldSide.field, operation, value };
       }
       default:
-        return unsupported("a query condition compares fields of the queried record with values");
+        return unsupported(`a ${operation} condition compares fields of the ${operation === "query" ? "queried" : "searched"} record with values`);
     }
   }
 
@@ -1506,6 +1553,8 @@ class Binder {
           );
           return undefined;
         }
+        if (isReferenceType(object.type)) return this.denoteReferenceMember(object.type, object.bound, expression);
+        if (isProjectionType(object.type)) return this.denoteProjectionMember(object.type, object.bound, expression);
         if (!isRecordType(object.type)) {
           this.diagnostics.error(
             DiagnosticCode.MemberOnNonRecord,
@@ -1515,7 +1564,7 @@ class Binder {
           return undefined;
         }
         const record = object.type.record;
-        if (object.type.origin === "query" && name === "id") {
+        if (isRowOrigin(object.type.origin) && name === "id") {
           // A query row carries the record's identity. It is a language
           // property, not a schema field, so it is bound as its own node.
           return {
@@ -1527,10 +1576,10 @@ class Binder {
         const field = record.fields.get(name);
         if (!field) {
           const sublist = record.sublists.get(name);
-          if (sublist && object.type.origin === "query") {
+          if (sublist && isRowOrigin(object.type.origin)) {
             this.diagnostics.error(
               DiagnosticCode.SublistOnQueryRow,
-              `Sublist '${name}' is available only on a loaded or context ${record.name}; a query row has no lines. ` +
+              `Sublist '${name}' is available only on a loaded or context ${record.name}; a ${object.type.origin} row has no lines. ` +
                 `Load the record first: 'let x = load ${record.name}(${sourceOf(expression.object)}.id)', then 'for line in x.${name}'`,
               expression.property.span,
             );
@@ -1544,7 +1593,7 @@ class Binder {
               bound: { kind: "SublistAccess", receiver: object.bound, sublist, nameSpan: expression.property.span, type, span: expression.span },
             };
           }
-          this.reportUnknownField(record, expression.property, object.type.origin === "query");
+          this.reportUnknownField(record, expression.property, isRowOrigin(object.type.origin));
           return undefined;
         }
         return {
@@ -1603,6 +1652,207 @@ class Binder {
     }
   }
 
+  /**
+   * A numeric id must be a whole number: internal ids are integers, so
+   * `Customer(1.5)` is a mistake the compiler can catch. A `number`-typed
+   * expression cannot be checked statically and is converted when emitted.
+   */
+  private checkWholeNumberId(id: BoundExpression, what: string, span: Span): boolean {
+    if (id.kind === "NumberLiteral" && !Number.isInteger(id.value)) {
+      this.diagnostics.error(DiagnosticCode.InvalidRecordId, `Record id must be a whole number, but ${what} received ${id.value}`, span);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * `Customer(123)`: a typed reference to one record. Syntactically a call
+   * of a bare name; semantically a value of type Ref<Customer>, because the
+   * name is a record type. No NetSuite module is needed to make one.
+   */
+  private denoteRecordReference(record: RecordSchema, expression: CallExpression, args: (BoundExpression | undefined)[]): Denotation | undefined {
+    if (expression.typeArgument) {
+      this.diagnostics.error(
+        DiagnosticCode.RecordTypeArgument,
+        `'${record.name}' is a record type, not an operation; a reference is written ${record.name}(id), like ${record.name}(123)`,
+        expression.typeArgument.span,
+      );
+      return undefined;
+    }
+    if (expression.targetType) {
+      this.diagnostics.error(DiagnosticCode.RecordTypeArgument, `A record reference takes no target type; remove 'to ${expression.targetType.name}'`, expression.targetType.span);
+      return undefined;
+    }
+    if (args.length !== 1) {
+      this.diagnostics.error(
+        DiagnosticCode.ArgumentCount,
+        `${record.name}(...) takes exactly one argument, the internal id, like ${record.name}(123); received ${args.length}`,
+        expression.span,
+      );
+      return undefined;
+    }
+    const id = args[0];
+    if (!id) return undefined;
+    if (!acceptsArgument("RecordId", id.type)) {
+      const hint = isReferenceType(id.type) ? ` (a reference is already ${typeName(id.type)}; its id is '${sourceOf(expression.arguments[0]!)}.id')` : "";
+      this.diagnostics.error(
+        DiagnosticCode.InvalidRecordId,
+        `Record id must be a number or a string, but ${record.name}(...) received ${typeName(id.type)}${hint}`,
+        expression.arguments[0]!.span,
+      );
+      return undefined;
+    }
+    if (!this.checkWholeNumberId(id, `${record.name}(...)`, expression.arguments[0]!.span)) return undefined;
+    const type = referenceType(record);
+    const reference: RecordReference = {
+      kind: "RecordReference",
+      recordType: { kind: "RecordTypeReference", record, span: expression.callee.span },
+      id,
+      type,
+      span: expression.span,
+    };
+    return { kind: "value", type, bound: reference };
+  }
+
+  /** `ref.id` is the reference's identity; any other member needs a projection or a load. */
+  private denoteReferenceMember(type: ReferenceType, receiver: BoundExpression, expression: MemberExpression): Denotation | undefined {
+    const name = expression.property.name;
+    if (name === "id") {
+      return {
+        kind: "value",
+        type: "Text",
+        bound: { kind: "RecordIdRead", receiver, nameSpan: expression.property.span, type: "Text", span: expression.span },
+      };
+    }
+    const record = type.record;
+    const field = record.fields.get(name);
+    const subject = sourceOf(expression.object);
+    this.diagnostics.error(
+      DiagnosticCode.MemberOnNonRecord,
+      field
+        ? `'${subject}' is a ${typeName(type)}: a reference to the record, not the record itself. ` +
+          `Look the field up without loading, '${subject}[${name}]', or load the record, 'let x = load ${record.name}(${subject}.id)', then 'x.${name}'`
+        : `${typeName(type)} has no member '${name}'; a reference has only '.id'` +
+          (suggest(name, [...record.fields.keys()]) ? `. Did you mean '${suggest(name, [...record.fields.keys()])}', looked up as '${subject}[${suggest(name, [...record.fields.keys()])}]'?` : ""),
+      expression.property.span,
+    );
+    return undefined;
+  }
+
+  /** `info.email` on a projection: only the projected fields exist. */
+  private denoteProjectionMember(type: ProjectionType, receiver: BoundExpression, expression: MemberExpression): Denotation | undefined {
+    const name = expression.property.name;
+    const field = type.fields.find((f) => f.id === name);
+    if (field) {
+      return {
+        kind: "value",
+        type: field.type,
+        bound: { kind: "FieldRead", receiver, field, fieldSpan: expression.property.span, type: field.type, span: expression.span },
+      };
+    }
+    const projected = type.fields.map((f) => f.id);
+    const subject = sourceOf(expression.object);
+    const known = type.record.fields.get(name);
+    const hint = suggest(name, projected);
+    this.diagnostics.error(
+      DiagnosticCode.FieldNotProjected,
+      known
+        ? `'${name}' was not projected: '${subject}' holds only ${projected.join(", ")} of ${type.record.name}. ` +
+          `Add it where the projection is made, '[${[...projected, name].join(", ")}]'`
+        : `${type.record.name} has no field '${name}'` + (hint ? `. Did you mean '${hint}'?` : `; '${subject}' holds ${projected.join(", ")}`),
+      expression.property.span,
+    );
+    return undefined;
+  }
+
+  /**
+   * `receiver[field, ...]`: a projection of schema fields. The receiver's
+   * type decides where the values come from (see LookupSource); every
+   * field is checked against the schema and listed once.
+   */
+  private denoteProjection(expression: ProjectionExpression, scope: Scope): Denotation | undefined {
+    const receiver = this.denote(expression.receiver, scope);
+    if (!receiver) return undefined;
+    const subject = sourceOf(expression.receiver);
+    if (receiver.kind !== "value") {
+      const message =
+        receiver.kind === "recordType"
+          ? `'${receiver.record.name}' is a record type; project fields from a reference to one record, like ${receiver.record.name}(123)[${expression.fields[0]?.name ?? "email"}]`
+          : receiver.kind === "namespace"
+            ? `'${receiver.namespace.name}' is a built-in namespace and has no fields to project`
+            : receiver.kind === "builtin"
+              ? `'${receiver.builtin.name}' is a built-in function and has no fields to project`
+              : `'${receiver.function.name}' is a function and has no fields to project`;
+      this.diagnostics.error(DiagnosticCode.ProjectionOnNonRecord, message, expression.receiver.span);
+      return undefined;
+    }
+
+    let record: RecordSchema;
+    let source: LookupSource;
+    if (isReferenceType(receiver.type)) {
+      record = receiver.type.record;
+      source = "lookupFields";
+    } else if (isRecordType(receiver.type)) {
+      record = receiver.type.record;
+      source = isRowOrigin(receiver.type.origin) ? "row" : "record";
+    } else {
+      const message = isProjectionType(receiver.type)
+        ? `'${subject}' is already a projection (${typeName(receiver.type)}); name every field you need in the one '[...]' that makes it`
+        : isLineType(receiver.type)
+          ? `A sublist line cannot be projected; read its fields directly, like '${subject}.${[...receiver.type.sublist.fields.keys()][0] ?? "quantity"}'`
+          : `Cannot project fields from a ${typeName(receiver.type)} value; '[...]' reads fields of a record reference, a record, or a row`;
+      this.diagnostics.error(DiagnosticCode.ProjectionOnNonRecord, message, expression.receiver.span);
+      return undefined;
+    }
+
+    const fields: LookupField[] = [];
+    const seen = new Map<string, Span>();
+    let ok = true;
+    for (const identifier of expression.fields) {
+      const field = record.fields.get(identifier.name);
+      if (!field) {
+        ok = false;
+        this.reportUnknownMember(record.name, record.fields.keys(), identifier);
+        continue;
+      }
+      const earlier = seen.get(field.id);
+      if (earlier) {
+        ok = false;
+        this.diagnostics.error(
+          DiagnosticCode.DuplicateProjectionField,
+          `'${field.id}' is projected twice (first at column ${earlier.start.column}); list each field once`,
+          identifier.span,
+        );
+        continue;
+      }
+      seen.set(field.id, identifier.span);
+      fields.push({ kind: "LookupField", field, span: identifier.span });
+    }
+    // An empty list is a syntax error the parser already reported.
+    if (!ok || fields.length === 0) return undefined;
+
+    if (source === "lookupFields") this.dependencies.add("N/search");
+    const type = fields.length === 1 ? fields[0]!.field.type : projectionType(record, fields.map((f) => f.field));
+    const lookup: Lookup = { kind: "Lookup", receiver: receiver.bound, record, fields, source, type, span: expression.span };
+    return { kind: "value", type, bound: lookup };
+  }
+
+  /** A write through a reference or projection: neither is a record, so say what to do instead. */
+  private reportReadOnlyWrite(type: ReferenceType | ProjectionType, receiver: BoundExpression, what: string, span: Span): void {
+    const name = receiver.kind === "LocalReference" ? `'${receiver.local.name}'` : `A ${typeName(type)} value`;
+    const load = `'let x = load ${type.record.name}(${receiver.kind === "LocalReference" ? `${receiver.local.name}.id` : "..."})'`;
+    const action = what === "saved" || what === "deleted" ? `cannot be ${what}` : `cannot be assigned ('${what}')`;
+    this.diagnostics.error(
+      DiagnosticCode.ReadOnlyReference,
+      isReferenceType(type)
+        ? `${name} is a ${typeName(type)}, a reference to the record rather than the record, and ${action}. ` +
+          `To change the record, load it: ${isReferenceType(type) && receiver.kind === "LocalReference" ? load : `'let x = load ${type.record.name}(...)'`}, then ${what === "saved" ? "'save x'" : what === "deleted" ? "'delete x'" : `assign 'x.${what}'`}`
+        : `${name} is a read-only projection (${typeName(type)}) of ${type.record.name} fields and ${action}. ` +
+          `To change the record, load it with 'load ${type.record.name}(...)' and ${what === "saved" ? "save" : what === "deleted" ? "delete" : "assign"} that`,
+      span,
+    );
+  }
+
   private denoteCall(expression: CallExpression, scope: Scope): Denotation | undefined {
     const callee = this.denote(expression.callee, scope);
     // Bind arguments even when the callee is bad so their errors surface too.
@@ -1610,6 +1860,7 @@ class Binder {
     if (!callee) return undefined;
 
     if (callee.kind === "function") return this.denoteFunctionCall(callee.function, callee.span, expression, args);
+    if (callee.kind === "recordType") return this.denoteRecordReference(callee.record, expression, args);
 
     if (callee.kind !== "builtin") {
       this.reportNotCallable(callee, expression);
@@ -1642,13 +1893,26 @@ class Binder {
         ok = false;
         return;
       }
-      if (!sameType(arg.type, expectedType)) {
+      if (!acceptsArgument(expectedType, arg.type)) {
         ok = false;
+        if (expectedType === "RecordId") {
+          const hint = isReferenceType(arg.type) ? `; a reference's id is '${sourceOf(expression.arguments[index]!)}.id'` : "";
+          this.diagnostics.error(
+            DiagnosticCode.InvalidRecordId,
+            `Record id must be a number or a string, but ${builtin.name} ${record?.name ?? "T"}(...) received ${typeName(arg.type)}${hint}`,
+            expression.arguments[index]!.span,
+          );
+          return;
+        }
         this.diagnostics.error(
           DiagnosticCode.ArgumentType,
-          `${builtin.name} argument ${index + 1} must be ${expectedType}, but received ${typeName(arg.type)}`,
+          `${builtin.name} argument ${index + 1} must be ${parameterTypeName(expectedType)}, but received ${typeName(arg.type)}`,
           expression.arguments[index]!.span,
         );
+        return;
+      }
+      if (expectedType === "RecordId" && !this.checkWholeNumberId(arg, `${builtin.name} ${record?.name ?? "T"}(...)`, expression.arguments[index]!.span)) {
+        ok = false;
         return;
       }
       boundArgs.push(arg);
@@ -1726,11 +1990,11 @@ class Binder {
         return;
       }
       if (isRecordType(parameter.type) && isRecordType(arg.type)) {
-        if (arg.type.origin === "query") {
+        if (isRowOrigin(arg.type.origin)) {
           ok = false;
           this.diagnostics.error(
             DiagnosticCode.ArgumentOrigin,
-            `A query row cannot be passed to '${fn.name}' as a ${parameter.type.record.name}: a row is a read-only view, not a record. ` +
+            `A ${arg.type.origin} row cannot be passed to '${fn.name}' as a ${parameter.type.record.name}: a row is a read-only view, not a record. ` +
               `Load it first: 'let x = load ${parameter.type.record.name}(${sourceOf(syntax)}.id)'`,
             syntax.span,
           );

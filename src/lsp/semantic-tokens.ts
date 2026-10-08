@@ -10,6 +10,7 @@ import type { LineIndex } from "./position.js";
 export const TOKEN_TYPES: readonly TokenKind[] = [
   "namespace",
   "type",
+  "struct",
   "parameter",
   "variable",
   "property",

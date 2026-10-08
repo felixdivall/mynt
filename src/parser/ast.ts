@@ -15,10 +15,11 @@ export type Declaration = UserEventDeclaration | ScheduledDeclaration | Function
 
 /**
  *   fn cleanOrder(order: SalesOrder) { ... }
- *   fn isBulk(quantity: Number) -> Bool { ... }
+ *   fn isBulk(quantity: number): boolean { ... }
  *
- * Parameter and return types are names the binder resolves: Text, Number,
- * Bool, or a record type for parameters; Text, Number, or Bool for returns.
+ * Parameter and return types are names the binder resolves: string, number,
+ * boolean, or a record type for parameters; string, number, or boolean for
+ * returns. The parser reserves the three builtin names at declaration sites.
  */
 export interface FunctionDeclaration {
   kind: "FunctionDeclaration";
@@ -217,6 +218,7 @@ export type Expression =
   | Identifier
   | MemberExpression
   | CallExpression
+  | ProjectionExpression
   | QueryExpression
   | BinaryExpression
   | UnaryExpression
@@ -225,14 +227,46 @@ export type Expression =
   | BoolLiteral;
 
 /**
+ *   Customer(123)[email]
+ *   customer[email, comments]
+ *
+ * A field projection: the fields named inside the brackets, read from the
+ * receiver. Fields are schema field names, written bare, never strings or
+ * arbitrary expressions, and at least one is required. This is the only
+ * bracket syntax in Mynt: there is no indexing, so `rows[0]` is an error.
+ * Whether the projection is a remote lookup or a local read depends on the
+ * receiver's type, which the binder decides.
+ */
+export interface ProjectionExpression {
+  kind: "ProjectionExpression";
+  receiver: Expression;
+  fields: Identifier[];
+  /** The `[`. */
+  openSpan: Span;
+  /** The `]`, or undefined while the projection is still being typed. */
+  closeSpan: Span | undefined;
+  span: Span;
+}
+
+/** The NetSuite backend a `query`/`search` expression targets. The programmer chooses; the compiler never picks. */
+export type QueryOperation = "query" | "search";
+
+export const QUERY_OPERATIONS: readonly QueryOperation[] = ["query", "search"];
+
+/**
  *   query Customer
  *       where email != "" && isperson
+ *   search Customer
+ *       where email != ""
  *
- * `query` and `where` are contextual. Inside the condition, bare names are
- * the record's fields. A `where` may begin the next line.
+ * `query`, `search`, and `where` are contextual. Inside the condition, bare
+ * names are the record's fields. A `where` may begin the next line. The two
+ * operations share one syntax and differ only in backend: `query` lowers to
+ * `N/query`, `search` to `N/search`.
  */
 export interface QueryExpression {
   kind: "QueryExpression";
+  operation: QueryOperation;
   keywordSpan: Span;
   recordType: Identifier;
   whereSpan: Span | undefined;

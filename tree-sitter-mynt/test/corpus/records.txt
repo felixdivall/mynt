@@ -1,0 +1,106 @@
+================================================================================
+load, create, copy, transform
+================================================================================
+
+scheduled {
+    let a = load Customer("123")
+    let b = create Customer
+    let c = copy Customer("123")
+    let d = transform SalesOrder("123") to Invoice
+    save a
+    save b
+    save c
+    save d
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))))
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)))
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))))
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))
+          target: (type_identifier)))
+      (save_statement
+        target: (identifier))
+      (save_statement
+        target: (identifier))
+      (save_statement
+        target: (identifier))
+      (save_statement
+        target: (identifier)))))
+
+================================================================================
+delete
+================================================================================
+
+scheduled {
+    let c = load Customer("1")
+    delete c
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))))
+      (delete_statement
+        target: (identifier)))))
+
+================================================================================
+field assignment and read
+================================================================================
+
+beforeSubmit edit (customer: Customer) {
+    customer.comments = customer.email
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (user_event
+    hook: (hook)
+    events: (event_filter
+      event: (identifier))
+    parameter: (parameter
+      name: (identifier)
+      type: (type_identifier))
+    body: (block
+      (assignment
+        left: (member_expression
+          object: (identifier)
+          property: (identifier))
+        right: (member_expression
+          object: (identifier)
+          property: (identifier))))))

@@ -41,11 +41,11 @@ describe("semantic tokens: declarations and references", () => {
       "beforeSubmit:keyword",
       "edit:enumMember",
       "customer:parameter+declaration",
-      "Customer:type",
+      "Customer:struct",
       "let:keyword",
       "other:variable+declaration",
       "load:function+defaultLibrary",
-      "Customer:type",
+      "Customer:struct",
       '"123":string',
       "other:variable",
       "comments:property+modification",
@@ -59,14 +59,14 @@ describe("semantic tokens: declarations and references", () => {
   });
 
   it("functions: declaration, parameters, signature types, calls, and return", () => {
-    expect(tokens(`fn review(customer: Customer, note: Text) -> Bool {\n    return customer.email == note\n}\nscheduled {\n    let c = load Customer("1")\n    if review(c, "x") { }\n}\n`)).toEqual([
+    expect(tokens(`fn review(customer: Customer, note: string): boolean {\n    return customer.email == note\n}\nscheduled {\n    let c = load Customer("1")\n    if review(c, "x") { }\n}\n`)).toEqual([
       "fn:keyword",
       "review:function+declaration",
       "customer:parameter+declaration",
-      "Customer:type",
+      "Customer:struct",
       "note:parameter+declaration",
-      "Text:type",
-      "Bool:type",
+      "string:type+defaultLibrary",
+      "boolean:type+defaultLibrary",
       "return:keyword",
       "customer:parameter",
       "email:property",
@@ -75,7 +75,7 @@ describe("semantic tokens: declarations and references", () => {
       "let:keyword",
       "c:variable+declaration",
       "load:function+defaultLibrary",
-      "Customer:type",
+      "Customer:struct",
       '"1":string',
       "if:keyword",
       "review:function",
@@ -84,11 +84,11 @@ describe("semantic tokens: declarations and references", () => {
     ]);
   });
 
-  it("loop variables are variables, and record types are types everywhere", () => {
+  it("loop variables are variables, and record types are structs everywhere", () => {
     const text = `scheduled {\n    for row in query Customer\n        where email != "" {\n        let c = load Customer(row.id)\n        let d = create Customer\n        let e = copy Customer("2")\n        let i = transform SalesOrder("3") to Invoice\n        save c\n        save d\n        save e\n        save i\n    }\n}\n`;
     const all = tokens(text);
-    expect(all.filter((t) => t.endsWith(":type"))).toEqual(["Customer:type", "Customer:type", "Customer:type", "Customer:type", "SalesOrder:type", "Invoice:type"]);
-    expect(all.slice(0, 8)).toEqual(["scheduled:keyword", "for:keyword", "row:variable+declaration", "in:keyword", "query:keyword", "Customer:type", "where:keyword", "email:property"]);
+    expect(all.filter((t) => t.endsWith(":struct"))).toEqual(["Customer:struct", "Customer:struct", "Customer:struct", "Customer:struct", "SalesOrder:struct", "Invoice:struct"]);
+    expect(all.slice(0, 8)).toEqual(["scheduled:keyword", "for:keyword", "row:variable+declaration", "in:keyword", "query:function+defaultLibrary", "Customer:struct", "where:keyword", "email:property"]);
     expect(tokenAt(text, "row.id")).toBe("variable");
     expect(tokenAt(text, "id)")).toBe("property+readonly");
     expect(all).toContain("to:keyword");
@@ -123,14 +123,14 @@ describe("semantic tokens: schema symbols and contextual words", () => {
     expect(tokenAt(text, "where = ")).toBe("variable+declaration");
     expect(tokenAt(text, "where\n")).toBe("variable");
     expect(tokenAt(text, "query = ")).toBe("variable+declaration");
-    expect(tokenAt(text, "query Customer")).toBe("keyword");
+    expect(tokenAt(text, "query Customer")).toBe("function+defaultLibrary");
     expect(tokenAt(text, "where email")).toBe("keyword");
     expect(tokenAt(text, "query\n")).toBe("variable");
     expect(tokenAt(text, "email ==")).toBe("property");
     expect(tokenAt(text, "for")).toBe("keyword");
     expect(tokenAt(text, "in c")).toBe("keyword");
     expect(tokenAt(text, "save.y")).toBeUndefined(); // an unbound assignment to a local member: nothing semantic here
-    expect(tokens(`scheduled {\n    let x = true\n    if !x { }\n}\n`)).toEqual(["scheduled:keyword", "let:keyword", "x:variable+declaration", "true:keyword", "if:keyword", "x:variable"]);
+    expect(tokens(`scheduled {\n    let x = true\n    if !x { }\n}\n`)).toEqual(["scheduled:keyword", "let:keyword", "x:variable+declaration", "if:keyword", "x:variable"]);
   });
 
   it("statement keywords, else, and numbers", () => {
@@ -170,20 +170,20 @@ describe("semantic tokens: protocol", () => {
 });
 
 describe("signature help", () => {
-  const FN = `fn calculate(value: Number, multiplier: Number) -> Number {\n    return value\n}\n`;
+  const FN = `fn calculate(value: number, multiplier: number): number {\n    return value\n}\n`;
 
   it("shows user functions with the active parameter", () => {
-    expect(help(`${FN}scheduled {\n    let r = calculate(§)\n}\n`)).toBe("fn calculate(value: Number, multiplier: Number) -> Number @0 [value: Number]");
-    expect(help(`${FN}scheduled {\n    let r = calculate(10, §)\n}\n`)).toBe("fn calculate(value: Number, multiplier: Number) -> Number @1 [multiplier: Number]");
+    expect(help(`${FN}scheduled {\n    let r = calculate(§)\n}\n`)).toBe("fn calculate(value: number, multiplier: number): number @0 [value: number]");
+    expect(help(`${FN}scheduled {\n    let r = calculate(10, §)\n}\n`)).toBe("fn calculate(value: number, multiplier: number): number @1 [multiplier: number]");
     expect(help(`${FN}scheduled {\n    let r = calculate(10, 2§0)\n}\n`)).toContain("@1");
   });
 
   it("shows built-ins, namespace members, and record operations specialized to the written type", () => {
-    expect(help(`scheduled {\n    let c = load Customer(§)\n}\n`)).toBe("load Customer(id: Text) -> Customer @0 [id: Text]");
-    expect(help(`scheduled {\n    let c = copy SalesOrder("1"§)\n}\n`)).toBe("copy SalesOrder(id: Text) -> SalesOrder @0 [id: Text]");
-    expect(help(`scheduled {\n    let i = transform SalesOrder(§) to Invoice\n}\n`)).toBe("transform SalesOrder(id: Text) to U -> U @0 [id: Text]");
-    expect(help(`scheduled {\n    log.debug(§)\n}\n`)).toBe("log.debug(message: Text) -> Void @0 [message: Text]");
-    expect(help(`scheduled {\n    let c = load Nope(§)\n}\n`)).toBe("load T(id: Text) -> T @0 [id: Text]");
+    expect(help(`scheduled {\n    let c = load Customer(§)\n}\n`)).toBe("load Customer(id: string | number): Customer @0 [id: string | number]");
+    expect(help(`scheduled {\n    let c = copy SalesOrder("1"§)\n}\n`)).toBe("copy SalesOrder(id: string | number): SalesOrder @0 [id: string | number]");
+    expect(help(`scheduled {\n    let i = transform SalesOrder(§) to Invoice\n}\n`)).toBe("transform SalesOrder(id: string | number) to U: U @0 [id: string | number]");
+    expect(help(`scheduled {\n    log.debug(§)\n}\n`)).toBe("log.debug(message: string): Void @0 [message: string]");
+    expect(help(`scheduled {\n    let c = load Nope(§)\n}\n`)).toBe("load T(id: string | number): T @0 [id: string | number]");
   });
 
   it("selects the innermost call and survives incomplete and over-long argument lists", () => {
@@ -193,7 +193,7 @@ describe("signature help", () => {
     expect(help(`${FN}scheduled {\n    let r = calculate(1,§`)).toContain("@1");
     expect(help(`scheduled {\n    log.debug(§`)).toContain("log.debug");
     expect(help(`scheduled {\n    let c = load Customer(§`)).toContain("load Customer");
-    expect(help(`${FN}scheduled {\n    let r = calculate(1, 2, 3, §)\n}\n`)).toBe("fn calculate(value: Number, multiplier: Number) -> Number @3");
+    expect(help(`${FN}scheduled {\n    let r = calculate(1, 2, 3, §)\n}\n`)).toBe("fn calculate(value: number, multiplier: number): number @3");
   });
 
   it("gives nothing outside a call, inside a string, or for an unknown callee", () => {
@@ -212,7 +212,32 @@ describe("signature help", () => {
     const result = svc.signatureHelp("untitled:t.mn", lines.positionAt(text.indexOf("10, ") + 4))!;
     expect(result.activeParameter).toBe(1);
     expect(result.signatures[0]!.parameters.map((p) => p.label)).toEqual([[13, 26], [28, 46]]);
-    expect(result.signatures[0]!.label.slice(13, 26)).toBe("value: Number");
+    expect(result.signatures[0]!.label.slice(13, 26)).toBe("value: number");
     expect(svc.signatureHelp("untitled:t.mn", { line: 0, character: 0 })).toBeNull();
+  });
+});
+
+describe("semantic tokens: operation, record type, field", () => {
+  const TEXT = `scheduled {\n    let customers = query Customer\n        where email != "" &&\n            comments != ""\n\n    for row in customers {\n        let customer = load Customer(row.id)\n        customer.comments = "Seen"\n    }\n}\n`;
+
+  it("gives query and load exactly the same token, record types `type`, and every field `property`", () => {
+    const all = tokens(TEXT);
+    expect(all.filter((t) => /^(query|load):/.test(t))).toEqual(["query:function+defaultLibrary", "load:function+defaultLibrary"]);
+    expect(all.filter((t) => t.startsWith("Customer:"))).toEqual(["Customer:struct", "Customer:struct"]);
+    expect(all.filter((t) => t.startsWith("where:"))).toEqual(["where:keyword"]);
+    // Unqualified fields inside `where` resolve against the queried record and are properties, not variables.
+    expect(all.filter((t) => /^(email|comments):/.test(t))).toEqual(["email:property", "comments:property", "comments:property+modification"]);
+    expect(all.filter((t) => t.startsWith("id:"))).toEqual(["id:property+readonly"]);
+    expect(all.filter((t) => /^(row|customer|customers):/.test(t)).every((t) => /:(variable)(\+declaration)?$/.test(t))).toBe(true);
+  });
+
+  it("classifies an unqualified query field as a property even when it is the whole condition's operand", () => {
+    expect(tokenAt(`scheduled {\n    let c = query Customer\n        where comments != ""\n}\n`, "comments")).toBe("property");
+  });
+
+  it("gives create, copy, and transform the same token as query and load", () => {
+    const all = tokens(`scheduled {\n    let a = create Customer\n    let b = copy Customer("1")\n    let i = transform SalesOrder("1") to Invoice\n    save a\n    save b\n    save i\n}\n`);
+    expect(all.filter((t) => /^(create|copy|transform):/.test(t))).toEqual(["create:function+defaultLibrary", "copy:function+defaultLibrary", "transform:function+defaultLibrary"]);
+    expect(all.filter((t) => t.startsWith("to:"))).toEqual(["to:keyword"]);
   });
 });

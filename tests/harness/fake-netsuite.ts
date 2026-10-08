@@ -389,6 +389,166 @@ function matches(row: Record<string, unknown>, condition: FakeCondition): boolea
   }
 }
 
+// ---- N/search --------------------------------------------------------------
+
+/** A `search.Column`, as `search.createColumn` makes it. */
+export class FakeSearchColumn {
+  constructor(
+    readonly name: string,
+    readonly sort: string | undefined = undefined,
+  ) {}
+}
+
+/** One `search.Result`: an `id` and `getValue(column)` for the search's columns. */
+export class FakeSearchResult {
+  constructor(
+    readonly id: string,
+    private readonly values: Record<string, unknown>,
+  ) {}
+
+  getValue(column: FakeSearchColumn | string): unknown {
+    return this.values[typeof column === "string" ? column : column.name];
+  }
+}
+
+/**
+ * A filter expression in N/search's own shape: `[name, operator, value]`, or
+ * `[expression, "and" | "or", expression]`. Exactly what Mynt emits; longer
+ * chains and `not` are refused so a change in the emitter is noticed.
+ */
+export type FilterExpression = unknown[];
+
+/** One search under construction, with exactly the surface Mynt emits. */
+export class FakeSearch {
+  constructor(
+    readonly type: string,
+    readonly columns: FakeSearchColumn[],
+    readonly filters: FilterExpression | undefined,
+    private readonly module: FakeSearchModule,
+  ) {}
+
+  runPaged(options: { pageSize: number }) {
+    const results = this.module.execute(this);
+    const pages: FakeSearchResult[][] = [];
+    for (let i = 0; i < results.length; i += options.pageSize) pages.push(results.slice(i, i + options.pageSize));
+    if (pages.length === 0) pages.push([]);
+    return {
+      pageRanges: pages.map((_, index) => ({ index })),
+      fetch: ({ index }: { index: number }) => ({ data: pages[index]! }),
+    };
+  }
+}
+
+export interface LookupFieldsCall {
+  type: string;
+  id: string;
+  columns: string[];
+}
+
+/**
+ * Fake `N/search`: `lookupFields` and `create`/`runPaged` over the record
+ * store, with the operators Mynt emits. Searching never mutates anything.
+ * Values come back as the store holds them; whether a live account returns
+ * numbers as strings is not modeled here.
+ */
+export class FakeSearchModule {
+  readonly Type = { CUSTOMER: "customer", SALES_ORDER: "salesorder", INVOICE: "invoice" } as const;
+  readonly Operator = {
+    IS: "is",
+    ISNOT: "isnot",
+    ISEMPTY: "isempty",
+    ISNOTEMPTY: "isnotempty",
+    EQUALTO: "equalto",
+    NOTEQUALTO: "notequalto",
+    LESSTHAN: "lessthan",
+    LESSTHANOREQUALTO: "lessthanorequalto",
+    GREATERTHAN: "greaterthan",
+    GREATERTHANOREQUALTO: "greaterthanorequalto",
+  } as const;
+  readonly Sort = { ASC: "ASC", DESC: "DESC" } as const;
+  readonly lookupCalls: LookupFieldsCall[] = [];
+  readonly runs: { type: string; columns: string[]; filters: FilterExpression | undefined }[] = [];
+
+  constructor(private readonly records: FakeRecordModule) {}
+
+  createColumn = (options: { name: string; sort?: string }): FakeSearchColumn => new FakeSearchColumn(options.name, options.sort);
+
+  create = (options: { type: string; columns: (FakeSearchColumn | string)[]; filters?: FilterExpression }): FakeSearch =>
+    new FakeSearch(
+      options.type,
+      options.columns.map((c) => (typeof c === "string" ? new FakeSearchColumn(c) : c)),
+      options.filters,
+      this,
+    );
+
+  /** Fake `search.lookupFields`: the requested columns of one stored record, without "loading" it. */
+  lookupFields = (options: { type: string; id: string | number; columns: string[] }): Record<string, unknown> => {
+    const id = String(options.id);
+    this.lookupCalls.push({ type: options.type, id, columns: [...options.columns] });
+    const record = this.records.all(options.type).find((entry) => entry.id === id)?.record;
+    if (!record) throw new Error(`Fake NetSuite has no ${options.type} record with id ${id} to look up`);
+    return Object.fromEntries(options.columns.map((column) => [column, record.getValue({ fieldId: column })]));
+  };
+
+  execute(search: FakeSearch): FakeSearchResult[] {
+    this.runs.push({ type: search.type, columns: search.columns.map((c) => c.name), filters: search.filters });
+    let rows = this.records
+      .all(search.type)
+      .map(({ id, record }) => ({ id, values: { internalid: id, ...record.snapshot() } }))
+      .filter((row) => !search.filters || evaluateFilter(row.values, search.filters));
+    const sort = search.columns.find((c) => c.sort);
+    if (sort) {
+      rows = [...rows].sort((a, b) => {
+        const x = a.values[sort.name];
+        const y = b.values[sort.name];
+        const order = Number.isFinite(Number(x)) && Number.isFinite(Number(y)) ? Number(x) - Number(y) : String(x) < String(y) ? -1 : String(x) > String(y) ? 1 : 0;
+        return order * (sort.sort === "DESC" ? -1 : 1);
+      });
+    }
+    return rows.map((row) => new FakeSearchResult(row.id, Object.fromEntries(search.columns.map((c) => [c.name, row.values[c.name]]))));
+  }
+}
+
+function evaluateFilter(row: Record<string, unknown>, expression: FilterExpression): boolean {
+  // A single wrapped term: `[[name, operator, value]]`.
+  if (expression.length === 1 && Array.isArray(expression[0])) return evaluateFilter(row, expression[0] as FilterExpression);
+  if (expression.length !== 3) throw new Error(`Fake N/search filter expressions have three parts, got ${JSON.stringify(expression)}`);
+  const [first, second, third] = expression;
+  if (Array.isArray(first)) {
+    if (!Array.isArray(third) || (second !== "and" && second !== "or")) throw new Error(`Fake N/search cannot evaluate ${JSON.stringify(expression)}`);
+    return second === "and" ? evaluateFilter(row, first) && evaluateFilter(row, third) : evaluateFilter(row, first) || evaluateFilter(row, third);
+  }
+  if (typeof first !== "string" || typeof second !== "string") throw new Error(`Fake N/search cannot evaluate ${JSON.stringify(expression)}`);
+  const actual = row[first];
+  const empty = actual === undefined || actual === null || actual === "";
+  switch (second) {
+    case "is":
+      // Checkbox fields take "T"/"F"; everything else compares as written.
+      if (third === "T" || third === "F") return Boolean(actual) === (third === "T");
+      return actual === third;
+    case "isnot":
+      return actual !== third;
+    case "isempty":
+      return empty;
+    case "isnotempty":
+      return !empty;
+    case "equalto":
+      return Number(actual) === Number(third);
+    case "notequalto":
+      return Number(actual) !== Number(third);
+    case "lessthan":
+      return Number(actual) < Number(third);
+    case "lessthanorequalto":
+      return Number(actual) <= Number(third);
+    case "greaterthan":
+      return Number(actual) > Number(third);
+    case "greaterthanorequalto":
+      return Number(actual) >= Number(third);
+    default:
+      throw new Error(`Fake N/search does not support operator ${second}`);
+  }
+}
+
 // ---- contexts --------------------------------------------------------------
 
 /** Mirrors `context.UserEventType` from the user event context. */
@@ -463,9 +623,10 @@ export class FakeNetSuite {
   readonly log = new FakeLog();
   readonly record = new FakeRecordModule();
   readonly query = new FakeQueryModule(this.record);
+  readonly search = new FakeSearchModule(this.record);
 
   get modules(): Record<string, unknown> {
-    return { "N/log": this.log, "N/record": this.record, "N/query": this.query };
+    return { "N/log": this.log, "N/record": this.record, "N/query": this.query, "N/search": this.search };
   }
 
   load(source: string): EntryPoints {

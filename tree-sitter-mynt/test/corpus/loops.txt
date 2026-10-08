@@ -1,0 +1,170 @@
+================================================================================
+for over a sequence
+================================================================================
+
+scheduled {
+    for row in query SalesOrder {
+        let order = load SalesOrder(row.id)
+        save order
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (for_statement
+        variable: (identifier)
+        iterable: (call_expression
+          function: (identifier)
+          type: (type_identifier))
+        body: (block
+          (let_statement
+            name: (identifier)
+            value: (call_expression
+              function: (identifier)
+              type: (type_identifier)
+              arguments: (arguments
+                (member_expression
+                  object: (identifier)
+                  property: (identifier)))))
+          (save_statement
+            target: (identifier)))))))
+
+================================================================================
+for over a sublist with line assignment and remove
+================================================================================
+
+scheduled {
+    let order = load SalesOrder("1")
+    for line in order.item {
+        if line.quantity < 1 {
+            line.quantity = 1
+        } else {
+            remove line
+        }
+    }
+    save order
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))))
+      (for_statement
+        variable: (identifier)
+        iterable: (member_expression
+          object: (identifier)
+          property: (identifier))
+        body: (block
+          (if_statement
+            condition: (binary_expression
+              left: (member_expression
+                object: (identifier)
+                property: (identifier))
+              right: (number))
+            consequence: (block
+              (assignment
+                left: (member_expression
+                  object: (identifier)
+                  property: (identifier))
+                right: (number)))
+            alternative: (block
+              (remove_statement
+                target: (identifier))))))
+      (save_statement
+        target: (identifier)))))
+
+================================================================================
+add line block
+================================================================================
+
+scheduled {
+    let order = create SalesOrder
+    add order.item {
+        item = "100"
+        quantity = 2
+    }
+    save order
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)))
+      (add_statement
+        sublist: (member_expression
+          object: (identifier)
+          property: (identifier))
+        body: (block
+          (assignment
+            left: (identifier)
+            right: (string))
+          (assignment
+            left: (identifier)
+            right: (number))))
+      (save_statement
+        target: (identifier)))))
+
+================================================================================
+nested if
+================================================================================
+
+scheduled {
+    let c = load Customer("1")
+    if c.email == "" {
+        if c.comments == "" {
+            c.comments = "both"
+        }
+    }
+    save c
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)
+          arguments: (arguments
+            (string))))
+      (if_statement
+        condition: (binary_expression
+          left: (member_expression
+            object: (identifier)
+            property: (identifier))
+          right: (string))
+        consequence: (block
+          (if_statement
+            condition: (binary_expression
+              left: (member_expression
+                object: (identifier)
+                property: (identifier))
+              right: (string))
+            consequence: (block
+              (assignment
+                left: (member_expression
+                  object: (identifier)
+                  property: (identifier))
+                right: (string))))))
+      (save_statement
+        target: (identifier)))))

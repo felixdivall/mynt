@@ -267,7 +267,7 @@ describe("schema normalization", () => {
     expect(order.fields.tranid).toMatchObject({ type: "Text", netsuite: { restName: "tranId" } });
   });
 
-  it("maps Text, Number, Bool, and Date", () => {
+  it("maps string, number, boolean, and Date", () => {
     expect(customer.fields.email!.type).toBe("Text");
     expect(customer.fields.creditlimit!.type).toBe("Number");
     expect(customer.fields.daysoverdue!.type).toBe("Number");
@@ -276,7 +276,7 @@ describe("schema normalization", () => {
     expect(order.fields.trandate).toMatchObject({ type: "Date", netsuite: { format: "date" } });
   });
 
-  it("keeps select values on Text fields", () => {
+  it("keeps select values on string fields", () => {
     expect(customer.fields.emailpreference).toMatchObject({ type: "Text", values: ["_default", "_html", "_pdf"] });
   });
 
@@ -405,7 +405,7 @@ describe("compiler against a pulled-style snapshot", () => {
     expect(result.output).toContain('fieldId: "comments"');
   });
 
-  it("uses a Bool field as a condition and assigns Bool to it", () => {
+  it("uses a boolean field as a condition and assigns boolean to it", () => {
     const result = compile(
       `scheduled {\n    let customer = load Customer("1")\n    if customer.isperson {\n        customer.custentity_mynt_tier = "person"\n        customer.isperson = false\n        save customer\n    }\n}\n`,
       { file: "t.mn", schema: provider },
@@ -424,13 +424,13 @@ describe("compiler against a pulled-style snapshot", () => {
     expect(invented.diagnostics.map((d) => d.code)).toEqual(["MYNT1004"]);
   });
 
-  it("read-only, Number, Date, Ref, and Unknown fields behave truthfully", () => {
+  it("read-only, number, Date, Ref, and Unknown fields behave truthfully", () => {
     const codes = (source: string) => compile(source, { file: "t.mn", schema: provider }).diagnostics.map((d) => `${d.code} ${d.message}`);
     expect(codes(`scheduled {\n    let c = load Customer("1")\n    c.balance = 1\n}\n`)[0]).toContain("MYNT1005 Customer.balance is read-only");
     expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.creditlimit > 1000 { save c }\n}\n`)).toEqual([]);
-    expect(codes(`scheduled {\n    let c = load Customer("1")\n    log.debug(c.datecreated)\n}\n`)[0]).toContain("must be Text, but received Date");
-    expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.subsidiary == "1" { }\n}\n`)[0]).toContain("Cannot compare Ref with Text");
-    expect(codes(`scheduled {\n    let c = load Customer("1")\n    c.currencyprecision = "x"\n}\n`)[0]).toContain("Cannot assign Text to Customer.currencyprecision, which is Unknown");
+    expect(codes(`scheduled {\n    let c = load Customer("1")\n    log.debug(c.datecreated)\n}\n`)[0]).toContain("must be string, but received Date");
+    expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.subsidiary == "1" { }\n}\n`)[0]).toContain("Cannot compare Ref with string");
+    expect(codes(`scheduled {\n    let c = load Customer("1")\n    c.currencyprecision = "x"\n}\n`)[0]).toContain("Cannot assign string to Customer.currencyprecision, which is Unknown");
   });
 });
 

@@ -578,7 +578,7 @@ describe("end to end: query and iterate", () => {
     expect(netsuite.record.persisted("customer", "2")).toBeUndefined();
   });
 
-  it("filters by Text, Bool, and compound conditions, reads row fields, and only fetches referenced columns", () => {
+  it("filters by string, boolean, and compound conditions, reads row fields, and only fetches referenced columns", () => {
     const source = `scheduled {\n    let logs = query MyntLog\n        where custrecord_mynt_done && name != "skip"\n    for entry in logs {\n        log.debug(entry.custrecord_mynt_message)\n    }\n    for entry in logs {\n        log.debug(entry.id)\n    }\n}\n`;
     const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
@@ -787,7 +787,7 @@ describe("end to end: functions", () => {
 
   it("functions can save, call each other, return values, and use names the backend must rename", () => {
     const result = compileMynt(
-      `fn label(record: Customer) -> Text {\n    return record.email\n}\nfn stamp(record: Customer, note: Text) {\n    record.comments = note\n    save record\n}\nscheduled {\n    let record = load Customer("1")\n    stamp(record, label(record))\n}\n`,
+      `fn label(record: Customer): string {\n    return record.email\n}\nfn stamp(record: Customer, note: string) {\n    record.comments = note\n    save record\n}\nscheduled {\n    let record = load Customer("1")\n    stamp(record, label(record))\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();

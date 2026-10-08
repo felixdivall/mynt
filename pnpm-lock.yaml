@@ -31,6 +31,12 @@ importers:
         specifier: ^3.1.0
         version: 3.2.7(@types/node@22.20.5)(tsx@4.23.15)
 
+  tree-sitter-mynt:
+    devDependencies:
+      tree-sitter-cli:
+        specifier: ^0.25.0
+        version: 0.25.10
+
 packages:
 
   '@esbuild/aix-ppc64@0.28.2':
@@ -505,6 +511,11 @@ packages:
     resolution: {integrity: sha512-u8KszXvGfU68hVcZpRHKG28T0krMuv2G5nDhiHaMLen/gIuFEgIJhaJuO69qjnXg5paSrbPMFfx3brNuN8eVSg==}
     engines: {node: '>=14.0.0'}
 
+  tree-sitter-cli@0.25.10:
+    resolution: {integrity: sha512-KoebQguKMCIghisEOdA372TIbrUl0kdnfZ9YQIBRAeOvNSKe85XbU4LuFW7hduRUwJj0rAG7pX5wo9sZhbBF1g==}
+    engines: {node: '>=12.0.0'}
+    hasBin: true
+
   tsx@4.23.15:
     resolution: {integrity: sha512-Yiex1Ovn8z2xPpOWckIiysV1SSyRMY9BkLF++q0yKiDxCqRhosKfMg3janKkiLBwZ5c/YryloKwGZcrEmtwxKw==}
     engines: {node: '>=18.0.0'}
@@ -978,6 +989,8 @@ snapshots:
   tinyrainbow@2.0.0: {}
 
   tinyspy@4.0.6: {}
+
+  tree-sitter-cli@0.25.10: {}
 
   tsx@4.23.15:
     dependencies:

@@ -18,18 +18,22 @@ import type {
   LocalDeclaration,
   LocalReference,
   LocalSymbol,
+  Lookup,
+  LookupField,
+  Query,
   QueryField,
   RecordIdRead,
+  RecordReference,
   RecordTypeReference,
   SublistAccess,
 } from "../semantic/bound.js";
 import { builtinSignature, type Builtin } from "../semantic/builtins.js";
-import { contains, nodeAt, syntaxPathAt, type SemanticDocument, type TreeNode } from "../semantic/query.js";
+import { boundPathAt, contains, syntaxPathAt, type SemanticDocument, type TreeNode } from "../semantic/query.js";
 import { allBoundNodes } from "../semantic/symbols.js";
-import { isLineType, isRecordType, sublistName, typeName } from "../semantic/types.js";
+import { isLineType, isPrimitiveTypeName, isProjectionType, isRecordType, isReferenceType, sublistName, typeName } from "../semantic/types.js";
 import { code, describeLocal, fieldDetail, recordDetail } from "./describe.js";
 import { wordOffsetAt } from "./position.js";
-import { functionSignatureInfo } from "./signature-help.js";
+import { functionSignatureInfo, referenceSignatureInfo } from "./signature-help.js";
 
 export interface HoverResult {
   /** Markdown. */
@@ -42,12 +46,13 @@ export function hoverAt(doc: SemanticDocument, offset: number): HoverResult | un
 }
 
 function hoverExactlyAt(doc: SemanticDocument, offset: number): HoverResult | undefined {
-  const node = nodeAt(doc, offset);
-  if (node) return boundHover(doc, node, offset) ?? undefined;
+  const path = boundPathAt(doc, offset);
+  const node = path[path.length - 1];
+  if (node) return boundHover(doc, node, path[path.length - 2], offset) ?? undefined;
   return headerHover(doc, offset);
 }
 
-function boundHover(doc: SemanticDocument, node: TreeNode, offset: number): HoverResult | undefined {
+function boundHover(doc: SemanticDocument, node: TreeNode, parent: TreeNode | undefined, offset: number): HoverResult | undefined {
   switch (node.kind) {
     case "LocalReference": {
       const reference = node as unknown as LocalReference;
@@ -84,8 +89,27 @@ function boundHover(doc: SemanticDocument, node: TreeNode, offset: number): Hove
     case "RecordIdRead": {
       const read = node as unknown as RecordIdRead;
       if (!contains(read.nameSpan, offset)) return undefined;
-      const record = recordOf(read.receiver.type);
-      return { contents: code(`${record ? `${record.name}.` : ""}id: Text`) + "\n\ninternal id of the record · use it to `load` the record", span: read.nameSpan };
+      const record = recordOf(read.receiver.type) ?? (isReferenceType(read.receiver.type) ? read.receiver.type.record : undefined);
+      return { contents: code(`${record ? `${record.name}.` : ""}id: string`) + "\n\ninternal id of the record · use it to `load` the record", span: read.nameSpan };
+    }
+    case "LookupField": {
+      const projected = node as unknown as LookupField;
+      const lookup = parent as unknown as Lookup | undefined;
+      return { contents: fieldHover(lookup?.kind === "Lookup" ? lookup.record.name : undefined, projected.field), span: projected.span };
+    }
+    case "Query": {
+      // The `query`/`search` word has no bound node of its own; it is the start of the expression.
+      const query = node as unknown as Query;
+      const keyword = { start: query.span.start, end: { ...query.span.start, offset: query.span.start.offset + query.operation.length, column: query.span.start.column + query.operation.length } };
+      if (!contains(keyword, offset)) return undefined;
+      const record = query.recordType.record.name;
+      const module = query.operation === "query" ? "N/query" : "N/search";
+      return {
+        contents:
+          code(`${query.operation} ${record}${query.condition ? " where ..." : ""}: Sequence<${record}>`) +
+          `\n\n${query.operation === "query" ? "query" : "search"} over \`${module}\` · read-only rows with \`id\` and the fields the program reads · one ${query.operation} runs per expression`,
+        span: keyword,
+      };
     }
     case "BuiltinReference": {
       const reference = node as unknown as BuiltinReference;
@@ -97,6 +121,15 @@ function boundHover(doc: SemanticDocument, node: TreeNode, offset: number): Hove
     }
     case "RecordTypeReference": {
       const reference = node as unknown as RecordTypeReference;
+      if (parent?.kind === "RecordReference") {
+        const record = (parent as unknown as RecordReference).recordType.record;
+        return {
+          contents:
+            code(referenceSignatureInfo(record).label) +
+            `\n\nreference to a ${record.name} by internal id · nothing is loaded · read fields with \`[email, ...]\` (one \`N/search.lookupFields\` call) or load it with \`load ${record.name}(ref.id)\``,
+          span: reference.span,
+        };
+      }
       return { contents: recordHover(reference.record), span: reference.span };
     }
     case "FunctionReference": {
@@ -123,6 +156,17 @@ function headerHover(doc: SemanticDocument, offset: number): HoverResult | undef
     if (contains(fn.nameSpan, offset)) return { contents: functionHover(fn), span: fn.nameSpan };
     const parameter = fn.parameters.find((p) => contains(p.declaredAt, offset));
     if (parameter) return { contents: localHover(parameter), span: parameter.declaredAt };
+  }
+  // Type names in a function signature: builtin types and record types
+  // are hovered differently so the distinction the editor draws is spelled out.
+  for (const declaration of doc.ast.declarations) {
+    if (declaration.kind !== "FunctionDeclaration") continue;
+    const types = [...declaration.parameters.map((p) => p.type), ...(declaration.returnType ? [declaration.returnType] : [])];
+    const type = types.find((t) => contains(t.span, offset));
+    if (!type) continue;
+    if (isPrimitiveTypeName(type.name)) return { contents: primitiveHover(type.name), span: type.span };
+    const record = doc.schema.getRecordByName(type.name);
+    if (record) return { contents: recordHover(record), span: type.span };
   }
   const path = syntaxPathAt(doc, offset);
   const node = path[path.length - 1];
@@ -155,10 +199,21 @@ function initializerOwner(doc: SemanticDocument, offset: number): string | undef
   return owner;
 }
 
-/** Who owns a field: `Customer`, or `SalesOrder.item` for a line. */
+/** Who owns a field: `Customer`, or `SalesOrder.item` for a line, or the record a projection was taken from. */
 function ownerOf(type: unknown): string | undefined {
   if (isLineType(type as never)) return sublistName(type as never);
+  if (isProjectionType(type as never)) return (type as { record: RecordSchema }).record.name;
   return recordOf(type)?.name;
+}
+
+const PRIMITIVE_SUMMARY: Record<string, string> = {
+  string: "text; the type of string literals and text fields",
+  number: "numeric; the type of number literals and numeric fields",
+  boolean: "true or false; the type of comparisons and the only type an `if` or `where` condition may have",
+};
+
+function primitiveHover(name: string): string {
+  return code(`builtin type ${name}`) + `\n\nMynt builtin type · ${PRIMITIVE_SUMMARY[name] ?? ""}`;
 }
 
 function recordHover(record: RecordSchema): string {
@@ -167,7 +222,7 @@ function recordHover(record: RecordSchema): string {
 
 function fieldHover(owner: string | undefined, field: FieldSchema): string {
   const prefix = owner ? `${owner}.` : "";
-  return code(`${prefix}${field.id}: ${field.type}`) + `\n\n${field.label} · ${fieldDetail(field)} · NetSuite field \`${field.id}\``;
+  return code(`${prefix}${field.id}: ${typeName(field.type)}`) + `\n\n${field.label} · ${fieldDetail(field)} · NetSuite field \`${field.id}\``;
 }
 
 function localHover(local: LocalSymbol): string {

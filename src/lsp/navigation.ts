@@ -26,7 +26,7 @@ export function documentOutline(doc: SemanticDocument): OutlineSymbol[] {
       return {
         name: declaration.name.name,
         kind: "function",
-        detail: `fn (${params})${declaration.returnType ? ` -> ${declaration.returnType.name}` : ""}`,
+        detail: `fn (${params})${declaration.returnType ? `: ${declaration.returnType.name}` : ""}`,
         span: declaration.span,
         selectionSpan: declaration.name.span,
         children: locals(declaration.body),

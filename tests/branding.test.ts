@@ -20,7 +20,8 @@ function walk(dir: string): string[] {
 describe("branding", () => {
   it("the CLI executable is mynt", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { name: string; bin: Record<string, string>; scripts: Record<string, string> };
-    expect(pkg.name).toBe("mynt");
+    // The unscoped name is blocked by npm's similarity check; the command name comes from `bin`, not the package name.
+    expect(pkg.name).toBe("@felixdivall/mynt");
     expect(pkg.bin).toEqual({ mynt: "./bin/mynt.js" });
     expect(existsSync("bin/mynt.js")).toBe(true);
     expect(pkg.scripts.mynt).toContain("src/cli/main.ts");
@@ -85,7 +86,18 @@ describe("branding", () => {
   });
 
   it("no tracked source, test, example, schema, or documentation mentions the old name", () => {
-    const files = [...walk("src"), ...walk("tests"), ...walk("examples"), ...walk("schemas"), "README.md", "package.json", ".gitignore"];
+    const files = [
+      ...walk("src"),
+      ...walk("tests"),
+      ...walk("examples"),
+      ...walk("schemas"),
+      ...walk("scripts"),
+      ...walk("editors").filter((f) => !f.includes("/target/")),
+      ...walk("tree-sitter-mynt").filter((f) => !f.includes("node_modules")),
+      "README.md",
+      "package.json",
+      ".gitignore",
+    ];
     const offenders = files.filter((f) => statSync(f).isFile() && f !== "tests/branding.test.ts" && !f.endsWith(".js") && OLD.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
   });

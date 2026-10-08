@@ -2,3 +2,4 @@ node_modules/
 dist/
 examples/*.js
 .mynt/schema/raw/
+.mynt-dev/

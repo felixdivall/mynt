@@ -8,6 +8,16 @@ dependencies are inferred.
 
 ## Commands
 
+Installed from npm, the package `@felixdivall/mynt` provides the `mynt`
+command:
+
+```bash
+npm install -g @felixdivall/mynt
+mynt check src/customer.mn
+```
+
+From this repository:
+
 ```bash
 pnpm install
 pnpm test                                    # vitest: parser, binder, end-to-end
@@ -129,10 +139,16 @@ The record operations are one family, all written with a record type:
 
 | Operation | Result | Exists in NetSuite |
 | --- | --- | --- |
-| `load Customer("123")` | `Customer` | already |
+| `load Customer(123)` | `Customer` | already |
 | `create Customer` | `Customer` | after `save` |
-| `copy Customer("123")` | `Customer` | after `save` |
-| `transform SalesOrder("123") to Invoice` | `Invoice` | after `save` |
+| `copy Customer(123)` | `Customer` | after `save` |
+| `transform SalesOrder(123) to Invoice` | `Invoice` | after `save` |
+
+An internal id is written as a number or a string, `load Customer(123)` or
+`load Customer("123")`; NetSuite accepts both, and the id is emitted as
+written. Any other type is an error (MYNT1045). There is no union type in
+Mynt: the built-ins simply accept either primitive here, and every id Mynt
+itself exposes (`row.id`, `ref.id`) is a `string`.
 
 Each lowers to the matching `N/record` call (`record.load`, `record.create`,
 `record.copy`, `record.transform`) with the same `record.Type` constant or
@@ -238,7 +254,7 @@ condition's line, and `else` goes on the line of the `}` it follows (a
 newline after `}` ends the statement). There is no `else if`; nest an `if`
 inside the `else` block.
 
-### Bool, comparisons, and logical operators
+### boolean, comparisons, and logical operators
 
 ```mynt
 if customer.email != "" && (customer.comments == "" || customer.comments == "New") {
@@ -247,19 +263,19 @@ if customer.email != "" && (customer.comments == "" || customer.comments == "New
 }
 ```
 
-A comparison has type `Bool`, and an `if` condition must be `Bool`. There is
+A comparison has type `boolean`, and an `if` condition must be `boolean`. There is
 no truthiness: `if customer.email { }` is an error (MYNT1021), because what
 `""`, `0`, `null`, and a record reference would mean as conditions is exactly
 the ambiguity Mynt exists to remove. The literals `true` and `false` are
-`Bool`, and a `Bool` can be stored in a local
+`boolean`, and a `boolean` can be stored in a local
 (`let missing = customer.email == ""`) and used as a condition later.
 
 | Operators            | Defined for      | Result |
 | -------------------- | ---------------- | ------ |
-| `!`                  | Bool             | Bool   |
-| `<` `<=` `>` `>=`    | Number           | Bool   |
-| `==` `!=`            | Text, Number     | Bool   |
-| `&&` `\|\|`          | Bool             | Bool   |
+| `!`                  | boolean          | boolean |
+| `<` `<=` `>` `>=`    | number           | boolean |
+| `==` `!=`            | string, number   | boolean |
+| `&&` `\|\|`          | boolean          | boolean |
 
 Precedence, highest to lowest, following JavaScript:
 
@@ -278,9 +294,9 @@ expression is not a separate syntax node; the inner expression keeps its
 structure and its source span widens to include the parentheses.
 
 Both comparison operands must have the same type (MYNT1022:
-`customer.email == 10` is an error, not `false`). Records, Bools, and Void
-cannot be compared (MYNT1023; use a Bool directly, `if x` or `if !x`), and
-Text has no ordering (MYNT1023). `&&`, `||`, and `!` take only Bool
+`customer.email == 10` is an error, not `false`). Records, booleans, and Void
+cannot be compared (MYNT1023; use a boolean directly, `if x` or `if !x`), and
+string has no ordering (MYNT1023). `&&`, `||`, and `!` take only boolean
 operands (MYNT1024). Numeric literals are written as `10` or `2.5`; there is
 no unary minus. A line may break after a binary operator, not before it.
 
@@ -344,7 +360,7 @@ if customer.email == "" {
 warning MYNT2001: 'customer' may leave this script with unsaved changes: it is modified here, but not every execution path that follows performs 'save customer'
 ```
 
-## Queries and loops
+## Queries, searches, and loops
 
 ```mynt
 scheduled {
@@ -363,19 +379,24 @@ scheduled {
 ```
 
 `query Customer where ...` is an executed query whose value is a
-`Sequence<Customer>`: a materialized, re-iterable collection of rows. Inside
+`Sequence<Customer>`: a materialized, re-iterable collection of rows.
+`search Customer where ...` has the same syntax, the same typing, and the
+same row model, and runs through `N/search` instead of `N/query`; see
+[Searches](#searches) below. The programmer names the backend; the compiler
+never picks one. Inside
 `where`, a bare name is a field of the queried record; a name that is both a
 field and a visible local is an error rather than a guess. A condition is
 an ordinary Mynt expression, type-checked as one, and then translated into a
 backend-neutral predicate: a field compared with a literal or a captured
-local, a Bool field on its own, and `&&`, `||`, `!` over those. Anything
+local, a boolean field on its own, and `&&`, `||`, `!` over those. Anything
 else, such as comparing two fields, is rejected (MYNT1031).
 
-A row is a `Customer` with a third origin, `query`: a typed, read-only view.
-Its fields can be read, and `row.id`, a language property rather than a
-schema field, identifies the record for `load`. Assigning, saving, or
-deleting through a row is an error (MYNT1030) whose message shows the
-load-then-modify form. `for row in rows { ... }` scopes the loop variable
+A row is a `Customer` with a row origin, `query` or `search`: a typed,
+read-only view. Its fields can be read, and `row.id`, a language property
+rather than a schema field, identifies the record for `load`. Assigning,
+saving, or deleting through a row is an error (MYNT1030) whose message
+shows the load-then-modify form. `row[email, comments]` projects fields
+the loop reads, locally, from the columns the planner fetched. `for row in rows { ... }` scopes the loop variable
 to the body; it is an ordinary local for hover, references, and rename.
 
 Lowering uses `N/query`. A helper emitted once per file builds the query,
@@ -383,10 +404,67 @@ requests `id` plus every field the program reads from that query's rows
 (planned statically, so `["id", "email"]` rather than the whole record),
 sorts by `id` so pages are stable, and collects every page of
 `runPaged({ pageSize: 1000 })`, since `run()` stops at 5,000 results and a
-Mynt loop means every matching row. Comparing a Text field with `""` lowers
-to `EMPTY`/`EMPTY_NOT`, because an empty NetSuite field is null; a Bool
+Mynt loop means every matching row. Comparing a string field with `""` lowers
+to `EMPTY`/`EMPTY_NOT`, because an empty NetSuite field is null; a boolean
 field uses `IS`. Only one query executes per `query` expression, however
 many loops iterate its result.
+
+### Searches
+
+```mynt
+scheduled {
+    let customers = search Customer
+        where email != "" &&
+            comments == ""
+
+    for row in customers {
+        log.debug(row.email)
+        let customer = load Customer(row.id)
+        customer.comments = "Reviewed by Mynt"
+        save customer
+    }
+}
+```
+
+`search T` is the `N/search` backend: the same `Sequence<T>` of read-only
+rows with `id` and the fields the program reads, planned statically exactly
+as for `query`. A helper emitted once per file creates the search with the
+planned columns, sorts by `internalid` so pages are stable, collects every
+page of `runPaged({ pageSize: 1000 })` (`run().each` stops at 4,000
+results), and returns each result as a plain object keyed by field id, the
+same row shape the query helper produces. One search executes per `search`
+expression.
+
+The `where` clause is bound and validated like a query's and first becomes
+the same backend-neutral predicate; `src/semantic/search.ts` then
+translates that predicate into N/search's operators, one explicit lowering
+per supported shape, and refuses the rest (MYNT1049) rather than
+approximating:
+
+| Mynt | `search.Operator` |
+| --- | --- |
+| string field `== ""` / `!= ""` | `ISEMPTY` / `ISNOTEMPTY` |
+| string field `== "x"` / `!= "x"` | `IS` / `ISNOT` |
+| number field `==` `!=` `<` `<=` `>` `>=` | `EQUALTO` `NOTEQUALTO` `LESSTHAN` `LESSTHANOREQUALTO` `GREATERTHAN` `GREATERTHANOREQUALTO` |
+| boolean field / `!field` | `IS` with `"T"` / `"F"` |
+| `&&` / `\|\|` | `[a, "and", b]` / `[a, "or", b]` filter expressions |
+
+`!` has no node of its own: it is pushed down to the comparison, flipping
+`IS`/`ISNOT`, `ISEMPTY`/`ISNOTEMPTY`, `EQUALTO`/`NOTEQUALTO`, `"T"`/`"F"`,
+and applying De Morgan's laws to `&&`/`||`. The one shape without an exact
+complement, `!` over an ordering comparison (`!(total < 5)` is not
+`total >= 5` when `total` is empty), is rejected with a message that says
+to write the comparison meant. Joins, summaries, formulas, saved searches,
+and text operators such as `contains` are not in the language yet; each
+needs syntax before it needs a lowering, and the `search` expression is
+shaped so they can be added as clauses rather than a redesign.
+
+Two N/search behaviors are taken from its documentation and not yet
+verified in a live account: that `isnot`/`notequalto` match empty fields as
+the complement of `is`/`equalto`, and that result values arrive with the
+types the schema promises (search results and `lookupFields` may return
+numbers as strings). Both would be fixed inside the two emitted helpers
+without touching the language.
 
 The lifecycle analysis treats a loop as running zero or more times: the loop
 head's state is the fixpoint of the entry state joined with the body's exit
@@ -395,6 +473,63 @@ is stable, then once more to report. A record created in the body and never
 saved warns; a write and save in the body do not; a conditional `delete`
 in the body leaves the record possibly deleted both after the loop and on
 the next iteration.
+
+## Record references and lookups
+
+```mynt
+scheduled {
+    let customer = Customer(123)
+    let email = customer[email]
+    let info = customer[email, comments]
+    log.debug(info.comments)
+}
+```
+
+`Customer(123)` (or `Customer("123")`) is a *record reference*: a value of
+type `Ref<Customer>` that identifies one record by internal id and does
+nothing else. Constructing it performs no NetSuite work and needs no
+module; at runtime it is the id itself. It exposes one member, `ref.id`,
+a `string` whatever the id was written as, so it reads like `row.id`.
+Reading a field through it (`ref.email`), assigning through it, saving it,
+or deleting it is an error whose message shows the two ways forward:
+project the fields you need, or `load Customer(ref.id)` (MYNT1011,
+MYNT1046).
+
+`receiver[field, ...]` is a *projection*: the named schema fields of one
+record-like value. The fields are bare names checked against the schema
+with the usual did-you-mean hint (MYNT1004); each may be listed once
+(MYNT1047) and at least one is required (MYNT0001). Brackets exist for
+nothing else: Mynt has no indexing, so `rows[0]` is a syntax error. One
+field yields that field's value with its own type, so
+`let email = customer[email]` is a `string`, not a one-property object.
+Several fields yield a read-only projection, `Customer[email, comments]`,
+on which exactly those fields exist (`info.email`; any other member is
+MYNT1050). A projection is not a record: it has no identity or lifecycle
+and cannot be saved, deleted, assigned through, or passed where a record
+is expected.
+
+What `[...]` does depends on the receiver, which is how one syntax keeps
+one meaning, "give me these fields", across the ways a record can be at
+hand:
+
+| Receiver | Lowering | NetSuite calls |
+| --- | --- | --- |
+| `Ref<T>` (`Customer(123)`, a reference local) | `N/search.lookupFields` with exactly the projected columns; one field is extracted from the result, several are the result object | one, however many fields |
+| a loaded, created, context, or parameter record | `getValue` per field | none |
+| a query or search row | the row's columns, which the column planner adds to the fetch | none |
+
+Using a lookup on a reference infers `N/search`; a script that only looks
+fields up depends on `N/search` and not on `N/record`. The flagship
+example is `examples/lookup-customer.mn`.
+
+Select fields are not modeled yet. A field of type `Ref` can be projected
+like any other and is inert, as it is on a loaded record: the schema
+snapshot shipped here has no `refTarget`, `mynt schema pull` fills one in
+only when NetSuite's metadata names the target, and the shape
+`lookupFields` returns for a select field has not been verified against an
+account. The intended model is `Ref<T>` with `ref.id` and `ref.text`, so a
+reference obtained from a field and one written as `Customer(123)` are the
+same kind of value; `Ref<T>` already carries the record type for it.
 
 ## Sublists
 
@@ -502,7 +637,7 @@ fn removeEmptyLines(order: SalesOrder) {
     }
 }
 
-fn needsReview(memo: Text) -> Bool {
+fn needsReview(memo: string): boolean {
     return memo == "" || memo == "TBD"
 }
 
@@ -519,8 +654,22 @@ scheduled {
 ```
 
 A file may declare top-level functions beside its entry point. Parameters
-are `Text`, `Number`, `Bool`, or a record type; a function returns `Text`,
-`Number`, or `Bool`, or nothing. Calls may precede the declaration. There
+are `string`, `number`, `boolean`, or a record type; a function returns
+`string`, `number`, or `boolean`, or nothing. `:` reads "has type" in both
+places: `memo: string` types the parameter and `needsReview(...): boolean`
+types the result, and the same form appears in every signature the editor
+shows (`load Customer(id: string): Customer`). A function without a return
+type returns nothing and is written without the colon. Calls may precede
+the declaration.
+
+The builtin types are lowercase and the record types are PascalCase on
+purpose: `string` is a language primitive, `Customer` is a type the schema
+defines, and the two should read differently. `string`, `number`, and
+`boolean` are reserved type names: they cannot be declared as locals,
+parameters, or functions (MYNT0001), and in a type position they always
+mean the primitive, never a record. The old spellings `Text`, `Number`,
+`Bool` are not accepted in source; they survive only as the names the
+schema snapshot uses for field types. There
 are no closures, nested functions, overloads, optional parameters, function
 values, or recursion. A value-returning function must `return` on every
 path; `return` always begins a statement. Functions lower to plain
@@ -553,10 +702,11 @@ from the initializer. A local may not be redeclared in the same scope, and an
 entry point parameter counts as declared. There is no reassignment yet.
 
 `Customer` and `SalesOrder` are record types: compile-time symbols from the
-schema, not runtime values. They appear in two places, the entry point
-parameter type and the record-type argument of a built-in such as
-`load Customer("123")`. Using one as a value is an error that points at
-`load`. A record-typed value, whether the entry point record or a loaded one,
+schema, not runtime values. They appear in three places: the entry point
+parameter type, the record-type argument of a built-in such as
+`load Customer("123")`, and as the constructor of a record reference,
+`Customer(123)`. Using one as a value is an error that points at `load`
+and at the reference form. A record-typed value, whether the entry point record or a loaded one,
 resolves fields through the same path, so `customer.email` means the same
 thing in both.
 
@@ -569,7 +719,7 @@ saved.
 ```ebnf
 File        := Declaration*
 Declaration := UserEvent | Scheduled | Function
-Function    := "fn" Identifier "(" (Parameter ("," Parameter)*)? ")" ("->" Identifier)? Block
+Function    := "fn" Identifier "(" (Parameter ("," Parameter)*)? ")" (":" Identifier)? Block
 UserEvent   := Hook EventFilter? "(" Parameter ")" Block
 Hook        := "beforeSubmit" | "afterSubmit"
 Scheduled   := "scheduled" Block
@@ -589,11 +739,12 @@ IfStatement := "if" Expression Block ("else" Block)? Terminator?
 Expression  := Unary (BinaryOperator Unary)*
 BinaryOperator := "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
 Unary       := "!" Unary | Postfix
-Postfix     := Primary ("." Identifier | TypeArgument ("(" Arguments ")")? ("to" TypeArgument)? | "(" Arguments ")")*
+Postfix     := Primary ("." Identifier | TypeArgument ("(" Arguments ")")? ("to" TypeArgument)? | "(" Arguments ")" | Projection)*
+Projection  := "[" Identifier ("," Identifier)* "]"
 TypeArgument:= Identifier
 Arguments   := (Expression ("," Expression)*)?
 Primary     := Identifier | String | Number | "true" | "false" | "(" Expression ")" | Query
-Query       := "query" Identifier (Terminator? "where" Expression)?
+Query       := ("query" | "search") Identifier (Terminator? "where" Expression)?
 ```
 
 Statements end at a newline (Go's rule: only after a token that can end a
@@ -609,22 +760,29 @@ operator table (`src/parser/parser.ts`) that records each operator's
 precedence and associativity; a new operator is a table entry.
 A call may carry a type argument between the callee and its parentheses:
 `load Customer("123")`. The parser records it as a name; the binder requires
-it to be a record type.
+it to be a record type. `Customer(123)` is syntactically a call of a bare
+name; the binder makes it a record reference because the name is a record
+type. `[` after an expression begins a projection and nothing else.
 
 ## Built-ins
 
 | Built-in        | Signature                 | Returns | Requires   |
 | --------------- | ------------------------- | ------- | ---------- |
-| `log.debug`     | `(details: Text)`         | Void    | `N/log`    |
-| `log.audit`     | `(details: Text)`         | Void    | `N/log`    |
-| `log.error`     | `(details: Text)`         | Void    | `N/log`    |
-| `log.emergency` | `(details: Text)`         | Void    | `N/log`    |
-| `load`          | `T(id: Text)`             | `T`     | `N/record` |
+| `log.debug`     | `(details: string)`       | Void    | `N/log`    |
+| `log.audit`     | `(details: string)`       | Void    | `N/log`    |
+| `log.error`     | `(details: string)`       | Void    | `N/log`    |
+| `log.emergency` | `(details: string)`       | Void    | `N/log`    |
+| `load`          | `T(id: string \| number)`  | `T`     | `N/record` |
 | `create`        | `T`                       | `T`     | `N/record` |
-| `copy`          | `T(id: Text)`             | `T`     | `N/record` |
-| `transform`     | `T(id: Text) to U`        | `U`     | `N/record` |
+| `copy`          | `T(id: string \| number)`  | `T`     | `N/record` |
+| `transform`     | `T(id: string \| number) to U` | `U` | `N/record` |
 
-These are the four levels `N/log` exposes; there is no `info`.
+These are the four levels `N/log` exposes; there is no `info`. `query` and
+`search` are operations of the language rather than registry built-ins
+(they have a `where` clause), and `T(id)` is the record reference
+constructor; all complete and highlight beside the built-ins. The
+`string | number` in a signature is documentation of what a record id
+accepts, not a type Mynt has.
 
 A built-in's signature declares whether it takes a record type before the
 argument list and may then return `T`, the record type supplied. That is the
@@ -716,9 +874,9 @@ to the account. The raw documents are normalized in
 
 | NetSuite says | Mynt field type |
 | --- | --- |
-| `boolean` | `Bool` |
-| `number`, `integer` | `Number` |
-| `string` | `Text` (a fixed `enum` is kept under `values`) |
+| `boolean` | `Bool` (spelled `boolean` in Mynt) |
+| `number`, `integer` | `Number` (spelled `number` in Mynt) |
+| `string` | `Text` (spelled `string` in Mynt; a fixed `enum` is kept under `values`) |
 | `string` with `format: date` / `date-time` | `Date` |
 | object with an `id` (a reference) | `Ref`, with `refTarget` when the `$ref` names a catalog type |
 | anything else | `Unknown` |
@@ -756,9 +914,9 @@ against the real account.
 ## Editor support
 
 `mynt lsp` runs a Language Server Protocol server on stdio. Any LSP client
-can use it; nothing assumes a particular editor. For Zed, a language
-configuration that runs `mynt lsp` for `*.mn` files is all that is needed;
-for VS Code, a thin extension that spawns the same command.
+can use it; nothing assumes a particular editor. Zed has a local extension
+under `editors/zed/` (see [Zed](#zed) below); for VS Code, a thin extension
+that spawns the same command would do.
 
 The server provides diagnostics, completion, hover, go-to-definition, find
 references, rename, and document symbols, and every one of them comes from
@@ -829,11 +987,11 @@ names:
 | --- | --- | --- |
 | record type, wherever written | `type` | |
 | user function | `function` | `declaration` at the declaration |
-| `load`, `create`, `copy`, `transform` | `function` | `defaultLibrary` |
+| `query`, `search`, `load`, `create`, `copy`, `transform` | `function` | `defaultLibrary` |
 | `log` and `log.debug` | `namespace`, `method` | `defaultLibrary` |
 | entry point and function parameters | `parameter` | `declaration` at the declaration |
 | `let` locals, loop variables | `variable` | `declaration` at the declaration |
-| body field, line field, query field, sublist, `id` | `property` | `readonly` when the schema says so, `modification` on an assignment target |
+| body field, line field, query field, projected field, sublist, `id` | `property` | `readonly` when the schema says so, `modification` on an assignment target |
 | event filters (`create \| edit`) | `enumMember` | |
 | `beforeSubmit`, `afterSubmit`, `scheduled`, `fn`, `let`, `if`, `else`, `for`, `in`, `query`, `where`, `save`, `delete`, `add`, `remove`, `to`, `return`, `true`, `false` | `keyword` | |
 | string and number literals | `string`, `number` | |
@@ -848,22 +1006,145 @@ token; a Tree-sitter grammar will highlight those. The intended stack is
 basic syntax from a grammar plus these semantic tokens on top, but the
 tokens are useful on their own and the grammar is not written yet.
 
-Zed consumes this server over stdio, but to my knowledge Zed highlights
-through Tree-sitter and does not yet apply LSP semantic tokens, so in Zed
-the highlighting will come from the grammar once it exists; VS Code and
-Neovim apply the tokens today. Nothing in the server is editor-specific.
+Zed highlights through Tree-sitter and, since it added the per-language
+`semantic_tokens` setting, can layer LSP semantic tokens over that in
+`"combined"` mode; VS Code and Neovim apply the tokens directly. Nothing in
+the server is editor-specific.
 
 Signature help (`textDocument/signatureHelp`, triggered by `(` and `,`)
 finds the innermost open call on the token stream, so it works while the
 call is incomplete, counts the active argument, and resolves the callee by
 name the way the binder would. User functions show their signature, built-ins
 show theirs, and a record operation is specialized to the written type:
-`load Customer(id: Text) -> Customer`. Too many arguments still show the
+`load Customer(id: string): Customer`. Too many arguments still show the
 signature; the diagnostic reports the count.
 
 The editor consumes only the normalized snapshot contract. A future change to
 `src/netsuite/schema/normalize.ts` after live validation changes what the
 snapshot says, not how the editor reads it.
+
+### Zed
+
+Zed needs two things the compiler does not: a Tree-sitter grammar for
+syntax (highlighting, brackets, indentation, outline, text objects) and an
+extension that registers the language and launches the server. Both are in
+this repository and neither is published.
+
+```text
+tree-sitter-mynt/            the grammar, shaped as its own future repository
+  grammar.js                 the grammar; src/ is generated and tracked
+  src/scanner.c              external scanner: the newline-terminator rule
+  test/corpus/*.txt          pinned parse trees, incl. incomplete code
+editors/zed/                 the extension
+  extension.toml.in          manifest template (grammar location filled in)
+  Cargo.toml, src/lib.rs     launches `mynt lsp`
+  languages/mynt/            config.toml, the *.scm query files, and
+                             semantic_token_rules.json
+scripts/zed-dev.mjs          renders extension.toml for local development
+```
+
+The compiler's handwritten parser remains the single authority on what Mynt
+is; the Tree-sitter grammar mirrors it for the editor and nothing in `src/`
+depends on it. The grammar keeps the compiler's two lexical rules: a newline
+ends a statement only after an identifier, string, number, `)` or `}` (and
+not before a `where` continuation), implemented in the external scanner;
+and `return` is the only reserved word. Every other keyword is contextual,
+so `let where = "x"` highlights `where` as a variable, as the compiler
+parses it. Tree-sitter recovers from errors by inserting `MISSING` and
+`ERROR` nodes, which keeps the structure around a half-typed statement
+intact, and the corpus pins what those trees look like.
+
+Day-to-day workflow:
+
+```sh
+pnpm install                 # also installs tree-sitter-cli for the grammar
+pnpm build                   # dist/ for the server
+pnpm grammar:test            # regenerates the parser and runs the corpus
+pnpm zed:dev                 # renders editors/zed/extension.toml
+```
+
+`pnpm zed:dev` copies the grammar into a standalone Git repository under
+`.mynt-dev/` (ignored) and writes `editors/zed/extension.toml` with that
+repository's `file://` URL and commit, because Zed fetches grammars from a
+Git repository at a commit and does not read a subdirectory of a monorepo.
+`extension.toml` is therefore generated and ignored; the template
+`extension.toml.in` is what is tracked, so no machine-specific path lands in
+the repository. Rerun it after a grammar change and reinstall the extension.
+
+Then, in Zed: `zed: install dev extension` and pick `editors/zed/`. Zed
+compiles the Rust extension to WebAssembly (it needs the `wasm32-wasip2`
+target: `rustup target add wasm32-wasip2`) and the grammar from the
+`file://` repository. Open any `.mn` file. The extension finds the server as
+`mynt` on the worktree's PATH (`npm install -g @felixdivall/mynt`, or `pnpm
+link --global` from this checkout). To run a different executable, use
+Zed's standard language-server configuration, which also takes `arguments`
+and `env`:
+
+```json
+{
+  "lsp": {
+    "mynt": { "binary": { "path": "/path/to/mynt/bin/mynt.js" } }
+  }
+}
+```
+
+The order is: `lsp.mynt.binary.path`, then `mynt` on PATH, then
+`MYNT_LSP_PATH` from the shell environment as a development fallback. When
+`arguments` is given it replaces the default `["lsp"]`.
+
+To layer the server's semantic tokens over the grammar's highlighting:
+
+```json
+{
+  "languages": {
+    "Mynt": { "semantic_tokens": "combined" }
+  }
+}
+```
+
+What the editor is told, all standard LSP token types and modifiers so any
+theme can style it:
+
+| Source                                     | Semantic token                        | Grammar capture (fallback)  |
+| ------------------------------------------ | ------------------------------------- | --------------------------- |
+| `fn` `let` `return` `if` `for` `in` `where` `to` `save` ... | `keyword`                 | `@keyword`                  |
+| `query` `search` `load` `create` `copy` `transform` | `function` + `defaultLibrary` | `@function.builtin`     |
+| `log` / `log.debug`                        | `namespace` / `method` + `defaultLibrary` | `@variable` / `@function.method` |
+| `string` `number` `boolean`                | `type` + `defaultLibrary`             | `@type.builtin`             |
+| `Customer` `SalesOrder`, also in `Customer(123)` | `struct`                        | `@type`                     |
+| `create \| edit` after a hook               | `enumMember`                          | `@constant`                 |
+| `true` `false`                             | none, the grammar's capture stands    | `@boolean`                  |
+| fields, `row.id`, `ref[email, comments]`   | `property` (+ `readonly`)             | `@property`                 |
+
+`query` and `search` are builtin operations to the semantic layer, like
+`load`; the grammar captures the six operations the same way. The grammar
+cannot consult the schema, so for `Customer(123)` its fallback captures a
+PascalCase callee as `@type` by convention; the server's `struct` token is
+authoritative. `where` and `to` are
+syntax in both. A record type is a `struct`, the LSP kind for a named,
+structured type with a known field layout and no behavior of its own, which
+is what a NetSuite record schema is; `class` would promise methods and
+`interface` a contract, and `type` says nothing. The builtin types are
+`type` + `defaultLibrary`. Zed's default rules map `struct` to the theme's
+`type.struct`, then `struct`, then `type` style, and map every `type` token
+to `type` regardless of modifiers, so the extension ships
+`semantic_token_rules.json` with one rule: `type` + `defaultLibrary` styles
+as `type.builtin`, falling back to `type`. A theme that defines `type`,
+`type.builtin`, and `type.struct` then shows ordinary types, builtin types,
+and record types in three colors. Nothing in Mynt names a theme or a
+color.
+
+`debug: open syntax tree view` shows the Tree-sitter tree for the open file
+and `dev: open highlights tree view` shows which capture each range got,
+which is how to check a query against a theme.
+
+When the grammar moves to `github.com/felixdivall/tree-sitter-mynt`,
+`extension.toml.in` becomes `extension.toml` with that URL and a commit SHA,
+`scripts/zed-dev.mjs` goes away, and the extension can be submitted to Zed's
+extension registry. The grammar repository should keep `src/` generated and
+committed (Zed and other consumers compile `parser.c` and do not run
+`tree-sitter generate`), tag releases, and keep `tree-sitter.json` as its
+manifest, which `tree-sitter-mynt/` already does.
 
 ## Pipeline
 
@@ -886,8 +1167,10 @@ the `SchemaProvider` interface in `src/schema/provider.ts`, and
 `schemas/builtin.json` is a hand-written snapshot in the same shape
 `mynt schema pull` writes. Built-ins are declared in
 `src/semantic/builtins.ts` and lowered in `src/netsuite/emit.ts`. Mynt's
-value types (`Text`, `Number`, `Bool`, `Void`, record types, and
-`Sequence<T>`) are in `src/semantic/types.ts`.
+value types (`Text`, `Number`, `Bool` internally, spelled `string`,
+`number`, `boolean` in source and messages; `Void`; record types; and
+`Sequence<T>`, `Ref<T>`, and projections) are in `src/semantic/types.ts`.
+Search predicates are translated in `src/semantic/search.ts`.
 
 ## Diagnostics
 
@@ -914,10 +1197,10 @@ value types (`Text`, `Number`, `Bool`, `Void`, record types, and
 | MYNT1018 | Missing, unexpected, or invalid record type argument      |
 | MYNT1019 | `save` or `delete` of a value that is not a record        |
 | MYNT1020 | `save` of the entry point record                          |
-| MYNT1021 | `if` condition is not Bool                                |
+| MYNT1021 | `if` condition is not boolean                             |
 | MYNT1022 | Comparison operands have different types                  |
-| MYNT1023 | Comparison not defined for the operand type (records, Bool, Void; ordering on Text) |
-| MYNT1024 | `&&`, `\|\|`, or `!` applied to a non-Bool operand          |
+| MYNT1023 | Comparison not defined for the operand type (records, boolean, Void; ordering on string) |
+| MYNT1024 | `&&`, `\|\|`, or `!` applied to a non-boolean operand       |
 | MYNT1025 | `delete` of the context record or of an unnamed record    |
 | MYNT1026 | `delete` of a new record that may not have been saved     |
 | MYNT1027 | Use of a record after it may have been deleted            |
@@ -938,4 +1221,10 @@ value types (`Text`, `Number`, `Bool`, `Void`, record types, and
 | MYNT1042 | Value-returning function with a path that does not return |
 | MYNT1043 | Recursive call                                            |
 | MYNT1044 | Record argument whose origin the callee's effects forbid  |
+| MYNT1045 | Record id that is not a string or number                  |
+| MYNT1046 | Assign, `save`, or `delete` through a record reference or projection |
+| MYNT1047 | Field listed twice in a projection                        |
+| MYNT1048 | `[...]` on a value that is not a reference, record, or row |
+| MYNT1049 | Search condition `N/search` cannot express                |
+| MYNT1050 | Member of a projection that was not projected             |
 | MYNT2001 | Warning: loaded record modified on a path with no later `save` |

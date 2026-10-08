@@ -1,0 +1,23 @@
+{
+  "name": "tree-sitter-mynt",
+  "version": "0.0.1",
+  "description": "Mynt grammar for Tree-sitter: editor structure and fallback highlighting. The Mynt compiler's own parser is authoritative.",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "bindings/node",
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter test",
+    "parse-examples": "tree-sitter parse ../examples/*.mn --quiet --stat"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.25.0"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.mynt",
+      "file-types": ["mn"],
+      "injection-regex": "^mynt$"
+    }
+  ]
+}

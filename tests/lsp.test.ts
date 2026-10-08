@@ -151,7 +151,7 @@ describe("lsp: completion", () => {
   it("offers entry points at top level, as snippets", () => {
     const { doc, offset } = at(`§`);
     const items = completionsAt(doc, offset);
-    expect(items.map((i) => i.label)).toEqual(["beforeSubmit", "afterSubmit", "scheduled", "fn"]);
+    expect(items.map((i) => `${i.label}: ${i.detail}`)).toEqual(["beforeSubmit: user event entry point", "afterSubmit: user event entry point", "scheduled: scheduled script entry point", "fn: function", "fn: function returning a value"]);
     expect(items[0]!.insertText).toBe("beforeSubmit ${1:edit} (${2:record}: ${3:Customer}) {\n\t$0\n}");
   });
 
@@ -171,8 +171,8 @@ describe("lsp: completion", () => {
     const { doc, offset } = at(`${UE}    customer.§\n}\n`);
     const items = completionsAt(doc, offset);
     expect(items.map((i) => i.label)).toEqual(["comments", "email", "entityid"]);
-    expect(items[0]).toMatchObject({ label: "comments", detail: "Text · writable", documentation: "Comments\nNetSuite field `comments`" });
-    expect(items[2]).toMatchObject({ label: "entityid", detail: "Text · read-only" });
+    expect(items[0]).toMatchObject({ label: "comments", detail: "string · writable", documentation: "Comments\nNetSuite field `comments`" });
+    expect(items[2]).toMatchObject({ label: "entityid", detail: "string · read-only" });
   });
 
   it("offers a loaded record's fields through the same path, and never another record's", () => {
@@ -185,17 +185,17 @@ describe("lsp: completion", () => {
     const { doc, offset } = at(`${UE}    log.§\n}\n`);
     const items = completionsAt(doc, offset);
     expect(items.map((i) => i.label)).toEqual(["debug", "audit", "error", "emergency"]);
-    expect(items[0]!.detail).toBe("log.debug(message: Text) -> Void");
+    expect(items[0]!.detail).toBe("log.debug(message: string): Void");
   });
 
   it("offers statements, locals, and built-ins at a statement position", () => {
     const items = labels(`scheduled {\n    let c = load Customer("1")\n    §\n}\n`);
-    expect(items).toEqual(["let", "if", "save", "delete", "for", "add", "remove", "return", "c", "log", "load", "create", "copy", "transform"]);
+    expect(items).toEqual(["let", "if", "save", "delete", "for", "add", "remove", "return", "c", "query", "search", "log", "load", "create", "copy", "transform"]);
   });
 
-  it("offers locals, built-ins, and Bool literals in expression position, respecting scope", () => {
-    expect(labels(`${UE}    let c = load Customer("1")\n    if c.email == §`)).toEqual(["customer", "c", "log", "load", "create", "copy", "transform", "true", "false"]);
-    expect(labels(`scheduled {\n    if true {\n        let inner = "x"\n    }\n    log.debug(§)\n}\n`)).toEqual(["log", "load", "create", "copy", "transform", "true", "false"]);
+  it("offers locals, built-ins, and boolean literals in expression position, respecting scope", () => {
+    expect(labels(`${UE}    let c = load Customer("1")\n    if c.email == §`)).toEqual(["customer", "c", "query", "search", "log", "load", "create", "copy", "transform", "true", "false"]);
+    expect(labels(`scheduled {\n    if true {\n        let inner = "x"\n    }\n    log.debug(§)\n}\n`)).toEqual(["query", "search", "log", "load", "create", "copy", "transform", "true", "false"]);
     const { doc, offset } = at(`${UE}    save §`);
     expect(completionsAt(doc, offset)[0]).toMatchObject({ label: "customer", detail: "Customer (context record, saved by NetSuite)" });
   });
@@ -205,7 +205,7 @@ describe("lsp: completion", () => {
     custom.records.customer!.fields.custentity_tier = { type: "Text", label: "Tier", writable: true, custom: true };
     const doc = analyze(`${UE}    customer.\n}\n`, "t.mn", new DocumentSchemaProvider(custom));
     const items = completionsAt(doc, `${UE}    customer.`.length);
-    expect(items.find((i) => i.label === "custentity_tier")).toMatchObject({ detail: "Text · writable · custom" });
+    expect(items.find((i) => i.label === "custentity_tier")).toMatchObject({ detail: "string · writable · custom" });
   });
 
   it("stays useful on incomplete and malformed source", () => {
@@ -216,7 +216,7 @@ describe("lsp: completion", () => {
     // A broken statement earlier in the block does not take the parameter out of scope.
     expect(labels(`${UE}    customer.comments = \n    customer. = "x"\n    customer.§\n}\n`)).toEqual(["comments", "email", "entityid"]);
     // A let whose initializer failed is not in scope, but everything else is.
-    expect(labels(`scheduled {\n    let a = load Customer("1")\n    let b = load Nope("2")\n    §\n}\n`)).toEqual(["let", "if", "save", "delete", "for", "add", "remove", "return", "a", "log", "load", "create", "copy", "transform"]);
+    expect(labels(`scheduled {\n    let a = load Customer("1")\n    let b = load Nope("2")\n    §\n}\n`)).toEqual(["let", "if", "save", "delete", "for", "add", "remove", "return", "a", "query", "search", "log", "load", "create", "copy", "transform"]);
   });
 
   it("offers nothing for member chains that are not records, inside strings, or after unknown names", () => {
@@ -233,21 +233,21 @@ describe("lsp: hover", () => {
   });
 
   it("describes fields with label, writability, and NetSuite id", () => {
-    expect(hover(`${UE}    customer.comm§ents = "x"\n}\n`)).toBe("```mynt\nCustomer.comments: Text\n```\n\nComments · Text · writable · NetSuite field `comments`");
-    expect(hover(`scheduled {\n    let o = load SalesOrder("1")\n    log.debug(o.tot§al)\n}\n`)).toContain("SalesOrder.total: Number\n```\n\nTotal · Number · read-only");
-    expect(hover(`scheduled {\n    log.debug(load Customer("1").em§ail)\n}\n`)).toContain("Customer.email: Text");
+    expect(hover(`${UE}    customer.comm§ents = "x"\n}\n`)).toBe("```mynt\nCustomer.comments: string\n```\n\nComments · string · writable · NetSuite field `comments`");
+    expect(hover(`scheduled {\n    let o = load SalesOrder("1")\n    log.debug(o.tot§al)\n}\n`)).toContain("SalesOrder.total: number\n```\n\nTotal · number · read-only");
+    expect(hover(`scheduled {\n    log.debug(load Customer("1").em§ail)\n}\n`)).toContain("Customer.email: string");
   });
 
   it("describes locals with their type and origin, at declaration and use", () => {
     expect(hover(`${UE}    save cust§omer\n}\n`)).toBe("```mynt\ncustomer: Customer\n```\n\nparameter · Customer (context record, saved by NetSuite)");
     expect(hover(`beforeSubmit edit (cust§omer: Customer) {\n}\n`)).toContain("parameter · Customer (context record, saved by NetSuite)");
     expect(hover(`scheduled {\n    let c = load Customer("1")\n    save c§\n}\n`)).toBe("```mynt\nc: Customer\n```\n\nlocal · Customer (owned record, persists only through save)");
-    expect(hover(`scheduled {\n    let miss§ing = true\n}\n`)).toBe("```mynt\nmissing: Bool\n```\n\nlocal · Bool");
+    expect(hover(`scheduled {\n    let miss§ing = true\n}\n`)).toBe("```mynt\nmissing: boolean\n```\n\nlocal · boolean");
   });
 
   it("describes built-ins with signatures", () => {
-    expect(hover(`scheduled {\n    let c = lo§ad Customer("1")\n}\n`)).toBe("```mynt\nload T(id: Text) -> T\n```\n\nLoads the existing record with the given internal id. · NetSuite module `N/record`");
-    expect(hover(`scheduled {\n    log.deb§ug("x")\n}\n`)).toBe("```mynt\nlog.debug(message: Text) -> Void\n```\n\nWrites a debug entry to the NetSuite execution log. · NetSuite module `N/log`");
+    expect(hover(`scheduled {\n    let c = lo§ad Customer("1")\n}\n`)).toBe("```mynt\nload T(id: string | number): T\n```\n\nLoads the existing record with the given internal id. · NetSuite module `N/record`");
+    expect(hover(`scheduled {\n    log.deb§ug("x")\n}\n`)).toBe("```mynt\nlog.debug(message: string): Void\n```\n\nWrites a debug entry to the NetSuite execution log. · NetSuite module `N/log`");
     expect(hover(`scheduled {\n    lo§g.debug("x")\n}\n`)).toContain("namespace log");
     expect(hover(`beforeSubmit ed§it (c: Customer) {\n}\n`)).toContain("event edit");
   });
@@ -341,13 +341,13 @@ describe("lsp: semantic expression queries", () => {
 
   it("answers typeAt from the bound model", () => {
     expect(typeAtCursor(`${UE}    save cust§omer\n}\n`)).toBe("Customer");
-    expect(typeAtCursor(`${UE}    log.debug(customer.comm§ents)\n}\n`)).toBe("Text");
-    expect(typeAtCursor(`${UE}    if customer.email =§= "" { }\n}\n`)).toBe("Bool");
-    expect(typeAtCursor(`${UE}    if customer.email == "" |§| customer.comments == "" { }\n}\n`)).toBe("Bool");
-    expect(typeAtCursor(`${UE}    if !§(customer.email == "") { }\n}\n`)).toBe("Bool");
+    expect(typeAtCursor(`${UE}    log.debug(customer.comm§ents)\n}\n`)).toBe("string");
+    expect(typeAtCursor(`${UE}    if customer.email =§= "" { }\n}\n`)).toBe("boolean");
+    expect(typeAtCursor(`${UE}    if customer.email == "" |§| customer.comments == "" { }\n}\n`)).toBe("boolean");
+    expect(typeAtCursor(`${UE}    if !§(customer.email == "") { }\n}\n`)).toBe("boolean");
     expect(typeAtCursor(`scheduled {\n    let c = lo§ad Customer("1")\n}\n`)).toBe("Customer");
     expect(typeAtCursor(`scheduled {\n    let c = create Cust§omer\n}\n`)).toBe("Customer");
-    expect(typeAtCursor(`scheduled {\n    let c = load Customer("§1")\n}\n`)).toBe("Text");
+    expect(typeAtCursor(`scheduled {\n    let c = load Customer("§1")\n}\n`)).toBe("string");
     expect(typeAtCursor(`scheduled {\n  §  log.debug("x")\n}\n`)).toBeUndefined();
   });
 
@@ -385,14 +385,14 @@ describe("lsp: create and arbitrary receivers", () => {
 
   it("hovers created locals and the create built-in", () => {
     expect(hover(`scheduled {\n    let c = create Customer\n    save c§\n}\n`)).toBe("```mynt\nc: Customer\n```\n\nlocal · Customer (owned record, persists only through save)");
-    expect(hover(`scheduled {\n    let c = cre§ate Customer\n}\n`)).toBe("```mynt\ncreate T -> T\n```\n\nCreates a new, unsaved record of type T. · NetSuite module `N/record`");
+    expect(hover(`scheduled {\n    let c = cre§ate Customer\n}\n`)).toBe("```mynt\ncreate T: T\n```\n\nCreates a new, unsaved record of type T. · NetSuite module `N/record`");
     expect(hover(`scheduled {\n    let c = create Cust§omer\n}\n`)).toContain("record Customer");
   });
 
   it("hovers write targets and reads identically, from the bound model", () => {
     const read = hover(`${UE}    log.debug(customer.comm§ents)\n}\n`);
     const write = hover(`${UE}    customer.comm§ents = "x"\n}\n`);
-    expect(read).toBe("```mynt\nCustomer.comments: Text\n```\n\nComments · Text · writable · NetSuite field `comments`");
+    expect(read).toBe("```mynt\nCustomer.comments: string\n```\n\nComments · string · writable · NetSuite field `comments`");
     expect(write).toBe(read);
     expect(hover(`${UE}    custo§mer.comments = "x"\n}\n`)).toContain("customer: Customer");
     expect(hover(`${UE}    customer.comments = "x"§\n}\n`)).toBeUndefined();
@@ -414,8 +414,8 @@ describe("lsp: copy, transform, and delete", () => {
   });
 
   it("hovers the operations with their signatures and offers delete as a statement", () => {
-    expect(hover(`scheduled {\n    let d = co§py Customer("1")\n    save d\n}\n`)).toBe("```mynt\ncopy T(id: Text) -> T\n```\n\nCreates a new, unsaved copy of the record with the given internal id. · NetSuite module `N/record`");
-    expect(hover(`scheduled {\n    let i = trans§form SalesOrder("1") to Invoice\n    save i\n}\n`)).toContain("```mynt\ntransform T(id: Text) to U -> U\n```");
+    expect(hover(`scheduled {\n    let d = co§py Customer("1")\n    save d\n}\n`)).toBe("```mynt\ncopy T(id: string | number): T\n```\n\nCreates a new, unsaved copy of the record with the given internal id. · NetSuite module `N/record`");
+    expect(hover(`scheduled {\n    let i = trans§form SalesOrder("1") to Invoice\n    save i\n}\n`)).toContain("```mynt\ntransform T(id: string | number) to U: U\n```");
     expect(hover(`scheduled {\n    let i = transform SalesOrder("1") to Inv§oice\n    save i\n}\n`)).toContain("record Invoice");
     expect(labels(`scheduled {\n    let c = load Customer("1")\n    §\n}\n`)).toContain("delete");
     expect(labels(`scheduled {\n    let c = load Customer("1")\n    delete §\n}\n`)).toContain("c");
@@ -436,8 +436,8 @@ describe("lsp: query and loops", () => {
 
   it("hovers a loop variable as a read-only query result, and its id", () => {
     expect(hover(`scheduled {\n    for row in query Customer {\n        log.debug(ro§w.email)\n    }\n}\n`)).toBe("```mynt\nrow: Customer\n```\n\nloop variable · Customer (query result, read-only)");
-    expect(hover(`scheduled {\n    for row in query Customer {\n        log.debug(row.i§d)\n    }\n}\n`)).toBe("```mynt\nCustomer.id: Text\n```\n\ninternal id of the record · use it to `load` the record");
-    expect(hover(`scheduled {\n    let c = query Customer where ema§il != ""\n}\n`)).toContain("Customer.email: Text");
+    expect(hover(`scheduled {\n    for row in query Customer {\n        log.debug(row.i§d)\n    }\n}\n`)).toBe("```mynt\nCustomer.id: string\n```\n\ninternal id of the record · use it to `load` the record");
+    expect(hover(`scheduled {\n    let c = query Customer where ema§il != ""\n}\n`)).toContain("Customer.email: string");
     expect(hover(`scheduled {\n    let c = query Cust§omer\n}\n`)).toContain("record Customer");
   });
 
@@ -461,7 +461,7 @@ describe("lsp: sublists", () => {
     const line = at(`${ORDER}    for line in order.item {\n        line.§\n    }\n}\n`);
     const lineItems = completionsAt(line.doc, line.offset);
     expect(lineItems.map((i) => i.label)).toEqual(["item", "quantity", "rate", "amount", "description"]);
-    expect(lineItems[3]).toMatchObject({ label: "amount", detail: "Number · read-only", documentation: "Amount · SalesOrder.item\nNetSuite field `amount`" });
+    expect(lineItems[3]).toMatchObject({ label: "amount", detail: "number · read-only", documentation: "Amount · SalesOrder.item\nNetSuite field `amount`" });
     expect(labels(`beforeSubmit edit (order: SalesOrder) {\n    for line in order.item {\n        line.§`)).toContain("quantity");
   });
 
@@ -473,16 +473,16 @@ describe("lsp: sublists", () => {
       "```mynt\nline: Line<SalesOrder.item>\n```\n\nloop variable · line of SalesOrder.item (persisted with the parent SalesOrder)",
     );
     expect(hover(`${ORDER}    for line in order.item {\n        line.quan§tity = 1\n    }\n    save order\n}\n`)).toBe(
-      "```mynt\nSalesOrder.item.quantity: Number\n```\n\nQuantity · Number · writable · NetSuite field `quantity`",
+      "```mynt\nSalesOrder.item.quantity: number\n```\n\nQuantity · number · writable · NetSuite field `quantity`",
     );
-    expect(hover(`${ORDER}    for line in order.item {\n        log.debug(line.descr§iption)\n    }\n}\n`)).toContain("SalesOrder.item.description: Text");
+    expect(hover(`${ORDER}    for line in order.item {\n        log.debug(line.descr§iption)\n    }\n}\n`)).toContain("SalesOrder.item.description: string");
   });
 
   it("answers typeAt for sublists and lines", () => {
     const { doc, text } = at(`${ORDER}    for line in order.item {\n        if line.quantity < 1 {\n            line.quantity = 1\n        }\n    }\n    save order§\n}\n`);
     expect(typeName(typeAt(doc, text.indexOf("order.item") + 7)!)).toBe("Sublist<SalesOrder.item>");
     expect(typeName(typeAt(doc, text.indexOf("line.quantity") + 1)!)).toBe("Line<SalesOrder.item>");
-    expect(typeName(typeAt(doc, text.indexOf("line.quantity") + 7)!)).toBe("Number");
+    expect(typeName(typeAt(doc, text.indexOf("line.quantity") + 7)!)).toBe("number");
     expect(typeName(typeAt(doc, text.indexOf("line.quantity <"))!)).toBe("Line<SalesOrder.item>");
   });
 });
@@ -496,7 +496,7 @@ describe("lsp: add and remove", () => {
     const { doc, offset } = at(`${ORDER}    add order.item {\n        quant§\n    }\n    save order\n}\n`);
     const items = completionsAt(doc, offset);
     expect(items.map((i) => i.label)).toEqual(["item", "quantity", "rate", "amount", "description"]);
-    expect(items[3]).toMatchObject({ label: "amount", detail: "Number · read-only" });
+    expect(items[3]).toMatchObject({ label: "amount", detail: "number · read-only" });
     expect(labels(`${ORDER}    add order.item {\n        item = "1"\n        §`)).toEqual(["item", "quantity", "rate", "amount", "description"]);
     expect(labels(`${ORDER}    add order.item {\n        quant§`)).toContain("quantity");
     expect(labels(`${ORDER}    add order.item {\n        quantity = §`)).toContain("order");
@@ -506,7 +506,7 @@ describe("lsp: add and remove", () => {
 
   it("hovers initializer fields with the sublist owner, and the sublist in an add", () => {
     expect(hover(`${ORDER}    add order.item {\n        quan§tity = 2\n    }\n    save order\n}\n`)).toBe(
-      "```mynt\nSalesOrder.item.quantity: Number\n```\n\nQuantity · Number · writable · NetSuite field `quantity`",
+      "```mynt\nSalesOrder.item.quantity: number\n```\n\nQuantity · number · writable · NetSuite field `quantity`",
     );
     expect(hover(`${ORDER}    add order.it§em {\n        quantity = 2\n    }\n    save order\n}\n`)).toContain("item: sublist of SalesOrder");
     expect(hover(`${ORDER}    for line in order.item {\n        remove li§ne\n    }\n    save order\n}\n`)).toContain("line: Line<SalesOrder.item>");
@@ -514,25 +514,25 @@ describe("lsp: add and remove", () => {
 });
 
 describe("lsp: functions", () => {
-  const FN = `fn setMemo(order: SalesOrder, memo: Text) {\n    order.memo = memo\n}\n`;
+  const FN = `fn setMemo(order: SalesOrder, memo: string) {\n    order.memo = memo\n}\n`;
 
   it("completes function names, parameter and return types, and the fn snippet", () => {
     expect(labels(`${FN}scheduled {\n    let order = load SalesOrder("1")\n    §\n}\n`)).toContain("setMemo");
     expect(labels(`${FN}scheduled {\n    let order = load SalesOrder("1")\n    if §`)).toContain("setMemo");
     expect(labels(`§`)).toContain("fn");
-    expect(labels(`fn f(order: §`)).toEqual(["Text", "Number", "Bool", "Customer", "SalesOrder", "MyntLog", "Invoice"]);
-    expect(labels(`fn f(order: SalesOrder) -> §`)).toEqual(["Text", "Number", "Bool"]);
+    expect(labels(`fn f(order: §`)).toEqual(["string", "number", "boolean", "Customer", "SalesOrder", "MyntLog", "Invoice"]);
+    expect(labels(`fn f(order: SalesOrder): §`)).toEqual(["string", "number", "boolean"]);
     expect(labels(`${FN.replace("    order.memo = memo\n", "    order.§\n")}scheduled { }\n`)).toEqual(["memo", "total", "item"]);
     expect(labels(`${FN.replace("    order.memo = memo\n", "    return §\n")}scheduled { }\n`)).toContain("memo");
   });
 
   it("hovers calls, declarations, and parameters", () => {
     expect(hover(`${FN}scheduled {\n    let order = load SalesOrder("1")\n    set§Memo(order, "x")\n    save order\n}\n`)).toBe(
-      "```mynt\nfn setMemo(order: SalesOrder, memo: Text)\n```\n\nrecord parameters: order · what the function does to them is checked at each call",
+      "```mynt\nfn setMemo(order: SalesOrder, memo: string)\n```\n\nrecord parameters: order · what the function does to them is checked at each call",
     );
-    expect(hover(`fn set§Memo(order: SalesOrder, memo: Text) {\n    order.memo = memo\n}\nscheduled { }\n`)).toContain("fn setMemo(order: SalesOrder, memo: Text)");
+    expect(hover(`fn set§Memo(order: SalesOrder, memo: string) {\n    order.memo = memo\n}\nscheduled { }\n`)).toContain("fn setMemo(order: SalesOrder, memo: string)");
     expect(hover(`fn f(or§der: SalesOrder) {\n    order.memo = "x"\n}\nscheduled { }\n`)).toBe("```mynt\norder: SalesOrder\n```\n\nparameter · SalesOrder (record parameter; what this function does to it is checked at each call)");
     expect(hover(`fn f(order: SalesOrder) {\n    or§der.memo = "x"\n}\nscheduled { }\n`)).toContain("record parameter");
-    expect(hover(`fn isBig(n: Number) -> Bool {\n    return n > 1\n}\nscheduled {\n    if is§Big(2) { }\n}\n`)).toBe("```mynt\nfn isBig(n: Number) -> Bool\n```");
+    expect(hover(`fn isBig(n: number): boolean {\n    return n > 1\n}\nscheduled {\n    if is§Big(2) { }\n}\n`)).toBe("```mynt\nfn isBig(n: number): boolean\n```");
   });
 });

@@ -1,0 +1,196 @@
+================================================================================
+record reference
+================================================================================
+
+scheduled {
+    let customer = Customer(123)
+    log.debug(customer.id)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          arguments: (arguments
+            (number))))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (member_expression
+              object: (identifier)
+              property: (identifier))))))))
+
+================================================================================
+single-field lookup on a reference
+================================================================================
+
+scheduled {
+    let email = Customer(123)[email]
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (projection_expression
+          receiver: (call_expression
+            function: (identifier)
+            arguments: (arguments
+              (number)))
+          fields: (projection_fields
+            field: (identifier)))))))
+
+================================================================================
+multi-field projection through a reference variable
+================================================================================
+
+scheduled {
+    let customer = Customer("123")
+    let info = customer[email, comments]
+    log.debug(info.email)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          arguments: (arguments
+            (string))))
+      (let_statement
+        name: (identifier)
+        value: (projection_expression
+          receiver: (identifier)
+          fields: (projection_fields
+            field: (identifier)
+            field: (identifier))))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (member_expression
+              object: (identifier)
+              property: (identifier))))))))
+
+================================================================================
+search without where
+================================================================================
+
+scheduled {
+    let customers = search Customer
+    for c in customers { }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (call_expression
+          function: (identifier)
+          type: (type_identifier)))
+      (for_statement
+        variable: (identifier)
+        iterable: (identifier)
+        body: (block)))))
+
+================================================================================
+search with where on the next line
+================================================================================
+
+scheduled {
+    let customers = search Customer
+        where email != "" &&
+            comments != ""
+    for row in customers {
+        let customer = load Customer(row.id)
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          condition: (binary_expression
+            left: (binary_expression
+              left: (identifier)
+              right: (string))
+            right: (binary_expression
+              left: (identifier)
+              right: (string)))))
+      (for_statement
+        variable: (identifier)
+        iterable: (identifier)
+        body: (block
+          (let_statement
+            name: (identifier)
+            value: (call_expression
+              function: (identifier)
+              type: (type_identifier)
+              arguments: (arguments
+                (member_expression
+                  object: (identifier)
+                  property: (identifier))))))))))
+
+================================================================================
+projection of a search row and a numeric load id
+================================================================================
+
+scheduled {
+    for row in search Customer {
+        let info = row[email, comments]
+        let customer = load Customer(123)
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (for_statement
+        variable: (identifier)
+        iterable: (call_expression
+          function: (identifier)
+          type: (type_identifier))
+        body: (block
+          (let_statement
+            name: (identifier)
+            value: (projection_expression
+              receiver: (identifier)
+              fields: (projection_fields
+                field: (identifier)
+                field: (identifier))))
+          (let_statement
+            name: (identifier)
+            value: (call_expression
+              function: (identifier)
+              type: (type_identifier)
+              arguments: (arguments
+                (number)))))))))
