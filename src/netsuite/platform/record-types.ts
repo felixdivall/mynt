@@ -9,6 +9,30 @@
  * stays correct; it just reads `"salesorder"` instead of
  * `record.Type.SALES_ORDER`.
  */
+/**
+ * The N/search *search type* family a record belongs to, where it differs
+ * from the record id. Every transaction record (`salesorder`, `invoice`,
+ * ...) is searched as `transaction`: a saved search over sales orders
+ * reports `searchType` `transaction`, and `search.Type.TRANSACTION` finds
+ * them. Platform knowledge, like the constants above, kept to the records
+ * listed there; a record absent here has no family and is searched by its
+ * own id.
+ */
+export const SEARCH_FAMILIES: Readonly<Record<string, string>> = {
+  cashsale: "transaction",
+  creditmemo: "transaction",
+  customerpayment: "transaction",
+  estimate: "transaction",
+  invoice: "transaction",
+  itemfulfillment: "transaction",
+  journalentry: "transaction",
+  opportunity: "transaction",
+  purchaseorder: "transaction",
+  salesorder: "transaction",
+  vendorbill: "transaction",
+  vendorpayment: "transaction",
+};
+
 export const RECORD_TYPE_CONSTANTS: Readonly<Record<string, string>> = {
   account: "ACCOUNT",
   cashsale: "CASH_SALE",

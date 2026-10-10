@@ -6,9 +6,9 @@
  * change to this file. Decisions that rest on a NetSuite naming rule
  * rather than on data the metadata states outright are marked DERIVED.
  */
-import { FIELD_TYPES, type FieldType, type SchemaDocument, type SchemaDocumentField, type SchemaDocumentRecord } from "../../schema/types.js";
+import { FIELD_TYPES, type FieldSelection, type FieldType, type SchemaDocument, type SchemaDocumentField, type SchemaDocumentRecord } from "../../schema/types.js";
 import type { RawMetadata, RawProperty, RawRecordSchema } from "../client/metadata.js";
-import { RECORD_TYPE_CONSTANTS } from "../platform/record-types.js";
+import { RECORD_TYPE_CONSTANTS, SEARCH_FAMILIES } from "../platform/record-types.js";
 
 export interface NormalizeOptions {
   account: string;
@@ -128,6 +128,8 @@ function normalizeRecord(
   };
   const constant = RECORD_TYPE_CONSTANTS[id];
   if (constant) record.suiteScriptType = constant;
+  const family = SEARCH_FAMILIES[id];
+  if (family) record.searchFamily = family;
   if (custom) record.custom = true;
   return record;
 }
@@ -159,6 +161,7 @@ function normalizeField(
     field.custom = true;
   }
   if (mapped.refTarget) field.refTarget = mapped.refTarget;
+  if (mapped.selection) field.selection = mapped.selection;
   if (property.enum && property.enum.length > 0) field.values = [...property.enum].sort();
   if (required || property.nullable === false) field.required = true;
   return { field };
@@ -172,7 +175,7 @@ function jsonType(property: RawProperty): string {
   return "unspecified";
 }
 
-function mapType(property: RawProperty, restType: string, names: Map<string, string>): { type: FieldType; refTarget?: string } {
+function mapType(property: RawProperty, restType: string, names: Map<string, string>): { type: FieldType; refTarget?: string; selection?: FieldSelection } {
   switch (restType) {
     case "boolean":
       return { type: "Bool" };
@@ -185,9 +188,12 @@ function mapType(property: RawProperty, restType: string, names: Map<string, str
       // A reference is an object with an `id` (and usually `refName`), or a
       // `$ref` to another catalog entry. The target is the referenced
       // catalog type when the `$ref` names one; NetSuite's generic
-      // `nsResource` gives no target.
+      // `nsResource` gives no target. One object is one reference, so the
+      // selection is `single`. A multiselect arrives as an array or a
+      // collection, which this normalizer omits with sublists (above): it
+      // cannot yet tell the two apart, so `multiple` is never produced here.
       const target = refTarget(property, names);
-      if (target.isReference) return target.name ? { type: "Ref", refTarget: target.name } : { type: "Ref" };
+      if (target.isReference) return target.name ? { type: "Ref", refTarget: target.name, selection: "single" } : { type: "Ref", selection: "single" };
       return { type: "Unknown" };
     }
     default:

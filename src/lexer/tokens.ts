@@ -17,6 +17,8 @@ export type TokenKind =
   | "Comma"
   | "EqualsEquals"
   | "BangEquals"
+  | "EqualsEqualsEquals"
+  | "BangEqualsEquals"
   | "Bang"
   | "AmpAmp"
   | "PipePipe"

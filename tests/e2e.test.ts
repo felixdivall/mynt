@@ -166,7 +166,7 @@ describe("end to end: load returns a typed record", () => {
   });
 
   it("loads SalesOrder 456 and audits its memo", () => {
-    const source = `scheduled {\n    let order = load SalesOrder("456")\n    log.audit(order.memo)\n}\n`;
+    const source = `scheduled {\n    let order = load SalesOrder(456)\n    log.audit(order.memo)\n}\n`;
     const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
@@ -187,7 +187,7 @@ describe("end to end: load returns a typed record", () => {
   });
 
   it("renames emitter-introduced names that collide with Mynt locals", () => {
-    const source = `scheduled {\n    let record = load Customer("1")\n    let context = load SalesOrder("2")\n    log.debug(record.email)\n    log.debug(context.memo)\n}\n`;
+    const source = `scheduled {\n    let record = load Customer(1)\n    let context = load SalesOrder(2)\n    log.debug(record.email)\n    log.debug(context.memo)\n}\n`;
     const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain('define(["N/log", "N/record"], (log, record$) => {');
@@ -229,7 +229,7 @@ describe("end to end: record lifecycle", () => {
   });
 
   it("loads, mutates, and persists SalesOrder 456", () => {
-    const source = `scheduled {\n    let order = load SalesOrder("456")\n    order.memo = "Processed"\n    save order\n}\n`;
+    const source = `scheduled {\n    let order = load SalesOrder(456)\n    order.memo = "Processed"\n    save order\n}\n`;
     const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
@@ -255,7 +255,7 @@ describe("end to end: record lifecycle", () => {
   });
 
   it("an unsaved mutation compiles with a warning and does not persist", () => {
-    const result = compileMynt(`scheduled {\n    let customer = load Customer("123")\n    customer.comments = "Changed"\n}\n`);
+    const result = compileMynt(`scheduled {\n    let customer = load Customer(123)\n    customer.comments = "Changed"\n}\n`);
     expect(result.diagnostics.map((d) => d.severity)).toEqual(["warning"]);
 
     const netsuite = new FakeNetSuite();
@@ -275,13 +275,13 @@ describe("end to end: conditional logic", () => {
     expect(result.output).toMatchSnapshot();
   });
 
-  it("uses strict comparison operators", () => {
+  it("emits the comparison operators as written: strict stays strict, loose stays loose", () => {
     const { output } = compileMynt(
-      `scheduled {\n    let o = load SalesOrder("1")\n    if o.memo != "" { }\n    if o.total >= 10 { }\n}\n`,
+      `scheduled {\n    let o = load SalesOrder(1)\n    if o.memo !== "" { }\n    if o.memo != "" { }\n    if o.total >= 10 { }\n}\n`,
     );
     expect(output).toContain(`}) !== ""`);
+    expect(output).toContain(`}) != ""`);
     expect(output).toContain(`}) >= 10`);
-    expect(output).not.toMatch(/[^=!]==[^=]/);
   });
 
   it("takes the true branch when the email is empty and persists the change", () => {
@@ -308,7 +308,7 @@ describe("end to end: conditional logic", () => {
 
   it("runs the else branch and numeric comparisons against seeded values", () => {
     const { output, diagnostics } = compileMynt(
-      `scheduled {\n    let order = load SalesOrder("7")\n    if order.total > 100 {\n        order.memo = "Large"\n    } else {\n        order.memo = "Small"\n    }\n    save order\n}\n`,
+      `scheduled {\n    let order = load SalesOrder(7)\n    if order.total > 100 {\n        order.memo = "Large"\n    } else {\n        order.memo = "Small"\n    }\n    save order\n}\n`,
     );
     expect(diagnostics).toEqual([]);
     expect(() => parseJs(output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
@@ -326,7 +326,7 @@ describe("end to end: conditional logic", () => {
 
   it("a block-scoped local compiles to a block-scoped const", () => {
     const { output, diagnostics } = compileMynt(
-      `scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        let n = "x"\n        log.debug(n)\n    } else {\n        let n = "y"\n        log.debug(n)\n    }\n}\n`,
+      `scheduled {\n    let c = load Customer(1)\n    if c.email == "" {\n        let n = "x"\n        log.debug(n)\n    } else {\n        let n = "y"\n        log.debug(n)\n    }\n}\n`,
     );
     expect(diagnostics).toEqual([]);
     expect(() => parseJs(output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();
@@ -382,8 +382,8 @@ describe("end to end: Boolean composition", () => {
 
   it("grouping: moving the parentheses changes the result", () => {
     const regrouped = READY.replace(
-      `customer.email != "" && (customer.comments == "" || customer.comments == "New")`,
-      `(customer.email != "" && customer.comments == "") || customer.comments == "New"`,
+      `customer.email !== "" && (customer.comments === "" || customer.comments === "New")`,
+      `(customer.email !== "" && customer.comments === "") || customer.comments === "New"`,
     );
     expect(regrouped).not.toBe(READY);
     // email empty + comments "New": false under the original grouping, true under this one.
@@ -391,14 +391,14 @@ describe("end to end: Boolean composition", () => {
   });
 
   it("unary not executes natively", () => {
-    const source = `scheduled {\n    let customer = load Customer("123")\n    if !(customer.email == "") {\n        customer.comments = "Has email"\n        save customer\n    }\n}\n`;
+    const source = `scheduled {\n    let customer = load Customer(123)\n    if !(customer.email == "") {\n        customer.comments = "Has email"\n        save customer\n    }\n}\n`;
     expect(run(source, "not.mn", { email: "a@b.c", comments: "" }).persisted).toEqual({ email: "a@b.c", comments: "Has email" });
     expect(run(source, "not.mn", { email: "", comments: "" }).persisted).toBeUndefined();
   });
 
   it("logical operators short-circuit in the generated code", () => {
     // The right operand reads a field; with a throwing getValue, a non-short-circuit && would fail.
-    const source = `scheduled {\n    let customer = load Customer("123")\n    if customer.email == "x" && customer.comments == "y" {\n        save customer\n    }\n}\n`;
+    const source = `scheduled {\n    let customer = load Customer(123)\n    if customer.email == "x" && customer.comments == "y" {\n        save customer\n    }\n}\n`;
     const result = compileMynt(source, "short.mn");
     const netsuite = new FakeNetSuite();
     const customer = netsuite.record.seed("customer", "123", { email: "" });
@@ -480,7 +480,7 @@ describe("end to end: delete, copy, transform", () => {
   }
 
   it("deletes a loaded record by its type constant and Record.id", () => {
-    const { output, netsuite } = run(`scheduled {\n    let customer = load Customer("123")\n    delete customer\n}\n`, (ns) => {
+    const { output, netsuite } = run(`scheduled {\n    let customer = load Customer(123)\n    delete customer\n}\n`, (ns) => {
       ns.record.seed("customer", "123", { email: "a" }).save();
     });
     expect(output).toContain("record.delete({\n            type: record.Type.CUSTOMER,\n            id: customer.id\n        });");
@@ -498,7 +498,7 @@ describe("end to end: delete, copy, transform", () => {
   });
 
   it("the fake runtime refuses to delete an unknown id", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("9")\n    delete c\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(9)\n    delete c\n}\n`);
     const netsuite = new FakeNetSuite();
     netsuite.record.seed("customer", "9", {});
     const entry = netsuite.load(result.output!);
@@ -507,16 +507,16 @@ describe("end to end: delete, copy, transform", () => {
   });
 
   it("copies an existing record into a new one that persists only on save", () => {
-    const { output, netsuite } = run(`scheduled {\n    let dup = copy Customer("1")\n    dup.comments = "copied"\n    save dup\n}\n`, (ns) => {
+    const { output, netsuite } = run(`scheduled {\n    let dup = copy Customer(1)\n    dup.comments = "copied"\n    save dup\n}\n`, (ns) => {
       ns.record.seed("customer", "1", { email: "a@b.c", comments: "original" });
     });
-    expect(output).toContain('record.copy({\n            type: record.Type.CUSTOMER,\n            id: "1"\n        });');
+    expect(output).toContain('record.copy({\n            type: record.Type.CUSTOMER,\n            id: 1\n        });');
     expect(output.match(/N\/record/g)).toHaveLength(1);
     expect(netsuite.record.copyCalls).toEqual([{ type: "customer", id: "1" }]);
     expect(netsuite.record.persisted("customer", "1000")).toEqual({ email: "a@b.c", comments: "copied" });
     expect(netsuite.record.load({ type: "customer", id: "1" }).getValue({ fieldId: "comments" })).toBe("original");
 
-    const unsaved = compileMynt(`scheduled {\n    let dup = copy Customer("1")\n    dup.comments = "x"\n}\n`);
+    const unsaved = compileMynt(`scheduled {\n    let dup = copy Customer(1)\n    dup.comments = "x"\n}\n`);
     expect(unsaved.diagnostics.map((d) => d.code)).toEqual(["MYNT2001"]);
     const ns = new FakeNetSuite();
     ns.record.seed("customer", "1", { email: "a@b.c" });
@@ -526,17 +526,17 @@ describe("end to end: delete, copy, transform", () => {
   });
 
   it("transforms a sales order into an unsaved invoice of the target type", () => {
-    const { output, netsuite } = run(`scheduled {\n    let inv = transform SalesOrder("55") to Invoice\n    inv.memo = "from order"\n    save inv\n}\n`, (ns) => {
+    const { output, netsuite } = run(`scheduled {\n    let inv = transform SalesOrder(55) to Invoice\n    inv.memo = "from order"\n    save inv\n}\n`, (ns) => {
       ns.record.seed("salesorder", "55", { memo: "order memo", total: 10 });
     });
-    expect(output).toContain('record.transform({\n            fromType: record.Type.SALES_ORDER,\n            fromId: "55",\n            toType: record.Type.INVOICE\n        });');
+    expect(output).toContain('record.transform({\n            fromType: record.Type.SALES_ORDER,\n            fromId: 55,\n            toType: record.Type.INVOICE\n        });');
     expect(netsuite.record.transformCalls).toEqual([{ fromType: "salesorder", fromId: "55", toType: "invoice" }]);
     expect(netsuite.record.persisted("invoice", "1000")).toEqual({ memo: "from order", total: 10, createdfrom: "55" });
     expect(netsuite.record.created[0]!.type).toBe("invoice");
   });
 
   it("copies a custom record by script id", () => {
-    const { output, netsuite } = run(`scheduled {\n    let entry = copy MyntLog("3")\n    save entry\n}\n`, (ns) => {
+    const { output, netsuite } = run(`scheduled {\n    let entry = copy MyntLog(3)\n    save entry\n}\n`, (ns) => {
       ns.record.seed("customrecord_mynt_log", "3", { name: "n" });
     });
     expect(output).toContain('type: "customrecord_mynt_log"');
@@ -652,7 +652,7 @@ describe("end to end: sublists", () => {
   });
 
   it("reads line fields by index and leaves changes unsaved until the parent saves", () => {
-    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        log.debug(line.description)\n        line.rate = 1\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        log.debug(line.description)\n        line.rate = 1\n    }\n}\n`);
     expect(result.diagnostics.map((d) => d.code)).toEqual(["MYNT2001"]);
     expect(result.output).toContain('order.getSublistValue({\n                    sublistId: "item",\n                    fieldId: "description",\n                    line: line$index\n                })');
     const netsuite = new FakeNetSuite();
@@ -665,7 +665,7 @@ describe("end to end: sublists", () => {
   });
 
   it("a transform target carries lines and persists line edits with the new record", () => {
-    const result = compileMynt(`scheduled {\n    let inv = transform SalesOrder("1") to Invoice\n    for line in inv.item {\n        line.description = "Billed"\n    }\n    save inv\n}\n`);
+    const result = compileMynt(`scheduled {\n    let inv = transform SalesOrder(1) to Invoice\n    for line in inv.item {\n        line.description = "Billed"\n    }\n    save inv\n}\n`);
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain("inv.setSublistValue({");
     const netsuite = new FakeNetSuite();
@@ -737,7 +737,7 @@ describe("end to end: add and remove lines", () => {
   });
 
   it("unsaved adds and removes stay in memory", () => {
-    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        remove line\n    }\n    add order.item {\n        item = "new"\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        remove line\n    }\n    add order.item {\n        item = "new"\n    }\n}\n`);
     expect(result.diagnostics.map((d) => d.code)).toEqual(["MYNT2001", "MYNT2001"]);
     const netsuite = new FakeNetSuite();
     const order = netsuite.record.seed("salesorder", "1", {}, { item: [{ item: "old" }] });
@@ -750,7 +750,7 @@ describe("end to end: add and remove lines", () => {
 
   it("adds lines to a copy using locals as values, and the while-form loop reads fields after a removal correctly", () => {
     const result = compileMynt(
-      `scheduled {\n    let qty = 4\n    let order = copy SalesOrder("1")\n    add order.item {\n        item = "x"\n        quantity = qty\n    }\n    for line in order.item {\n        if line.item == "drop" {\n            remove line\n        } else {\n            line.description = line.item\n        }\n    }\n    save order\n}\n`,
+      `scheduled {\n    let qty = 4\n    let order = copy SalesOrder(1)\n    add order.item {\n        item = "x"\n        quantity = qty\n    }\n    for line in order.item {\n        if line.item == "drop" {\n            remove line\n        } else {\n            line.description = line.item\n        }\n    }\n    save order\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
     const netsuite = new FakeNetSuite();
@@ -787,7 +787,7 @@ describe("end to end: functions", () => {
 
   it("functions can save, call each other, return values, and use names the backend must rename", () => {
     const result = compileMynt(
-      `fn label(record: Customer): string {\n    return record.email\n}\nfn stamp(record: Customer, note: string) {\n    record.comments = note\n    save record\n}\nscheduled {\n    let record = load Customer("1")\n    stamp(record, label(record))\n}\n`,
+      `fn label(record: Customer): string {\n    return record.email\n}\nfn stamp(record: Customer, note: string) {\n    record.comments = note\n    save record\n}\nscheduled {\n    let record = load Customer(1)\n    stamp(record, label(record))\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
     expect(() => parseJs(result.output!, { ecmaVersion: 2020, sourceType: "script" })).not.toThrow();

@@ -18,6 +18,7 @@
  */
 
 const PREC = {
+  or: -1,
   where: 0,
   or: 1,
   and: 2,
@@ -89,6 +90,7 @@ module.exports = grammar({
           $.return_statement,
           $.if_statement,
           $.for_statement,
+          $.try_statement,
           $.assignment,
           $.expression_statement,
         ),
@@ -112,6 +114,20 @@ module.exports = grammar({
     if_statement: ($) =>
       seq("if", field("condition", $._expression), field("consequence", $.block), optional(seq("else", field("alternative", $.block)))),
 
+    /**
+     * `try { } catch err { } finally { }`: `catch` (with an optional binding)
+     * and `finally` follow the closing `}` on the same line, like `else`.
+     * Both are optional here so a cut-off `try {` still parses; the compiler
+     * requires one of them.
+     */
+    try_statement: ($) =>
+      seq(
+        "try",
+        field("body", $.block),
+        optional(seq("catch", optional(field("binding", $.identifier)), field("handler", $.block))),
+        optional(seq("finally", field("finalizer", $.block))),
+      ),
+
     for_statement: ($) =>
       seq("for", field("variable", $.identifier), "in", field("iterable", $._expression), field("body", $.block)),
 
@@ -130,7 +146,9 @@ module.exports = grammar({
         $.member_expression,
         $.call_expression,
         $.projection_expression,
+        $.saved_search,
         $.query_expression,
+        $.or_expression,
         $.binary_expression,
         $.unary_expression,
         $.parenthesized_expression,
@@ -178,7 +196,86 @@ module.exports = grammar({
      * call_expression here and `search` stays an ordinary identifier
      * elsewhere (`let search = 1`). Only the `where` clause needs its own node.
      */
-    query_expression: ($) => prec.right(PREC.where, seq(field("query", $.call_expression), "where", field("condition", $._expression))),
+    /**
+     * A search with clauses: `where`, `select`, `order by`, `group by`, `limit`, `first`, in any
+     * order, each at most once (the compiler reports a repeat; the grammar
+     * keeps every clause so the editor can point at it). Each clause word
+     * is contextual, and a line that begins with one continues the search
+     * (the external scanner emits no terminator before it). Clause bodies
+     * are optional so a clause cut short still parses.
+     */
+    /**
+     * `value or return` / `value or { ... }`: an optional resolved where it
+     * arises. Binds looser than a search's clauses, so `search T first or
+     * return` resolves the whole search; `or` is a keyword only here (a
+     * local may be named `or`), and a line beginning with it continues
+     * the expression above. Boolean or stays `||`.
+     */
+    or_expression: ($) => prec.right(PREC.or, seq(field("value", $._expression), "or", field("branch", choice($.return_statement, $.block)))),
+
+    query_expression: ($) =>
+      prec.right(PREC.where + 1, seq(field("query", choice($.call_expression, $.saved_search)), repeat1(field("clause", $._search_clause)))),
+
+    _search_clause: ($) => choice($.where_clause, $.select_clause, $.order_clause, $.group_clause, $.limit_clause, $.first_clause),
+
+    where_clause: ($) => prec.right(PREC.where, seq("where", optional(field("condition", $._expression)))),
+
+    /**
+     * `select tranid, total = sum(amount)`: fields, and named aggregates. An
+     * aggregate item is structural (an alias, `=`, an aggregate call), never
+     * an assignment: the aggregate names are keywords only after `=` in a
+     * select, so a field or local named `sum` stays an identifier.
+     */
+    select_clause: ($) => prec.right(PREC.where, seq("select", optional(seq($._select_item, repeat(seq(",", $._select_item)))))),
+
+    _select_item: ($) => choice(field("field", $._field_path), field("item", $.aggregate_item)),
+
+    // `=` after a select field could also begin an assignment whose left side is the whole search; the aggregate item wins, as in the compiler.
+    aggregate_item: ($) => prec(PREC.where + 2, seq(field("alias", $.identifier), "=", field("value", $.aggregate_call))),
+
+    aggregate_call: ($) => seq(field("function", $.aggregate_function), "(", optional(field("argument", $._field_path)), ")"),
+
+    aggregate_function: (_) => choice("sum", "count", "min", "max", "avg"),
+
+    /** `group by entity, subsidiary`: the summary buckets. Like `order by`, cut-short forms still parse. */
+    group_clause: ($) => prec.right(PREC.where, seq("group", optional(seq("by", optional(seq(field("field", $._field_path), repeat(seq(",", field("field", $._field_path))))))))),
+
+    order_clause: ($) => prec.right(PREC.where, seq("order", optional(seq("by", optional(seq(field("key", $.sort_key), repeat(seq(",", field("key", $.sort_key))))))))),
+
+    sort_key: ($) => prec.right(seq(field("field", $._field_path), optional(field("direction", choice("asc", "desc"))))),
+
+    limit_clause: ($) => prec.right(PREC.where, seq("limit", optional(field("count", $._expression)))),
+
+    first_clause: (_) => "first",
+
+    /**
+     * `field` or `field.field` in a clause: a path of names, never a call or
+     * a deeper expression, so a following `asc`/`desc` is not a type
+     * argument. The joined form is shown as a member_expression, which is
+     * what the compiler binds it as.
+     */
+    _field_path: ($) => choice($.identifier, alias($.joined_field, $.member_expression)),
+
+    joined_field: ($) => prec(1, seq(field("object", $.identifier), ".", field("property", $.identifier))),
+
+    /**
+     * `search saved "customsearch_x"` / `search saved Customer "customsearch_x"`:
+     * a saved search named by its script id, a string or a name, with the
+     * record type written only when the id does not carry it. `saved` is
+     * contextual, like `where`: a keyword after the search callee, an
+     * identifier elsewhere. A name right after `saved` is the type when an
+     * id follows it, else the id. Both parts are optional so a line cut
+     * short after `saved` still ends at its newline (the compiler reports).
+     */
+    saved_search: ($) =>
+      prec.right(
+        PREC.where + 1,
+        seq(
+          field("function", $.identifier),
+          "saved",
+          optional(choice(seq(field("type", alias($.identifier, $.type_identifier)), field("id", choice($.string, $.identifier))), field("id", choice($.string, $.identifier)))),
+        ),
+      ),
 
     binary_expression: ($) =>
       choice(
@@ -187,6 +284,8 @@ module.exports = grammar({
           ["&&", PREC.and],
           ["==", PREC.equality],
           ["!=", PREC.equality],
+          ["===", PREC.equality],
+          ["!==", PREC.equality],
           ["<", PREC.relational],
           ["<=", PREC.relational],
           [">", PREC.relational],

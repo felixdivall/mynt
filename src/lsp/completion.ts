@@ -1,14 +1,15 @@
-import { PRIMITIVE_TYPE_NAMES } from "../semantic/types.js";
+import { ERROR_MEMBERS, PRIMITIVE_TYPE_NAMES } from "../semantic/types.js";
 import { CompletionItemKind, InsertTextFormat, type CompletionItem } from "vscode-languageserver";
 import { USER_EVENT_TYPES } from "../semantic/bound.js";
 import { builtinSignature, listBuiltinRoots, type BuiltinSymbol } from "../semantic/builtins.js";
 import { QUERY_OPERATIONS } from "../parser/ast.js";
 import { expressionEndingAt, localsInScopeAt, resolveNameAt, type SemanticDocument } from "../semantic/query.js";
-import { isLineType, isProjectionType, isRecordType, isReferenceType, isRowOrigin, sublistName, type MyntType, type RecordType } from "../semantic/types.js";
+import { isLineType, isProjectionType, isRecordType, isReferenceType, isRowOrigin, isRowRecord, isSummaryType, sublistName, summaryField, typeName, type MyntType, type RecordType } from "../semantic/types.js";
+import type { BoundExpression } from "../semantic/bound.js";
 import type { SublistSchema } from "../schema/types.js";
-import type { FieldSchema, RecordSchema } from "../schema/types.js";
+import type { FieldSchema, FieldType, RecordSchema } from "../schema/types.js";
 import { completionSite, type CompletionContext } from "./context.js";
-import { describeLocal, fieldDetail, recordDetail } from "./describe.js";
+import { aggregateDetail, describeLocal, fieldDetail, recordDetail } from "./describe.js";
 import { functionSignature } from "./hover.js";
 
 export function completionsAt(doc: SemanticDocument, offset: number): CompletionItem[] {
@@ -28,6 +29,43 @@ function itemsFor(doc: SemanticDocument, offset: number, context: CompletionCont
       return memberItems(doc, context.dotOffset, context.receiver);
     case "projectionField":
       return projectionFieldItems(doc, context.bracketOffset, context.receiver, context.listed);
+    case "savedSearchId":
+      return savedSearchItems(doc, offset, context.record);
+    case "searchClause":
+      // After `first` the search is optional, and `or` (not a clause) resolves it where it is declared.
+      return [...(context.used.includes("first") ? orItems() : []), ...clauseItems(context.used), ...statementItems(), ...localItems(doc, offset), ...functionItems(doc), ...builtinItems()];
+    case "selectField": {
+      const record = searchedRecord(doc, context.record, context.savedSearch);
+      // Fields first (in a summary, the ones a bucket can carry), then the aggregates, each as a named item.
+      return record ? [...[...record.fields.values()].filter((field) => !context.listed.includes(field.id)).map((field) => fieldItem(field)), ...aggregateItems()] : aggregateItems();
+    }
+    case "aggregate":
+      return aggregateItems(context.alias);
+    case "aggregateField": {
+      const record = searchedRecord(doc, context.record, context.savedSearch);
+      const accepts = AGGREGATE_ACCEPTS[context.aggregate] ?? [];
+      return record ? [...record.fields.values()].filter((field) => accepts.includes(field.type)).map((field) => fieldItem(field)) : [];
+    }
+    case "groupField": {
+      const record = searchedRecord(doc, context.record, context.savedSearch);
+      return record ? [...record.fields.values()].filter((field) => field.type !== "Unknown" && field.selection !== "multiple" && !context.listed.includes(field.id)).map((field) => fieldItem(field)) : [];
+    }
+    case "sortField": {
+      const record = searchedRecord(doc, context.record, context.savedSearch);
+      if (context.result) {
+        // A summary sorts by what it exposes: its grouped fields and its aggregate names, not the source fields.
+        return context.result.map((name) => {
+          const field = record?.fields.get(name);
+          return field ? { ...fieldItem(field), detail: `${fieldDetail(field)} · grouped` } : { label: name, kind: CompletionItemKind.Property, detail: "aggregate result of this search" };
+        });
+      }
+      return record ? [...record.fields.values()].filter((field) => field.type !== "Unknown" && field.selection !== "multiple").map((field) => fieldItem(field)) : [];
+    }
+    case "sortDirection":
+      return [
+        { label: "asc", kind: CompletionItemKind.Keyword, detail: "ascending (the default)" },
+        { label: "desc", kind: CompletionItemKind.Keyword, detail: "descending" },
+      ];
     case "statement":
       return [...statementItems(), ...localItems(doc, offset), ...functionItems(doc), ...builtinItems()];
     case "parameterType":
@@ -51,7 +89,7 @@ function itemsFor(doc: SemanticDocument, offset: number, context: CompletionCont
       return [...sublist.fields.values()].map((field) => fieldItem(field, owner));
     }
     case "queryField": {
-      const record = doc.schema.getRecordByName(context.record);
+      const record = searchedRecord(doc, context.record, context.savedSearch);
       return [
         ...(record ? [...record.fields.values()].map((field) => fieldItem(field)) : []),
         ...localItems(doc, offset),
@@ -112,6 +150,7 @@ function statementItems(): CompletionItem[] {
     snippet("add", "add ${1:record}.${2:sublist} {\n\t$0\n}", "append a sublist line"),
     snippet("remove", "remove ${1:line}", "remove the current sublist line"),
     snippet("return", "return $0", "return from the function"),
+    snippet("try", "try {\n\t$1\n} catch ${2:err} {\n\t$0\n}", "recover from a thrown runtime error"),
   ];
 }
 
@@ -135,13 +174,42 @@ function fieldItem(field: FieldSchema, owner?: string): CompletionItem {
 
 function memberItemsOfType(type: MyntType): CompletionItem[] {
   if (isRecordType(type)) return recordMemberItems(type);
+  // A summary row has exactly its result fields: grouped fields (a joined one under its relationship) and aggregate names; no `id`.
+  if (isSummaryType(type)) {
+    const items: CompletionItem[] = [];
+    const seen = new Set<string>();
+    for (const result of type.fields) {
+      const name = result.summary === "group" ? (result.join ? result.join.via.id : result.field!.id) : result.name;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      if (result.summary === "group") {
+        const field = result.join ? type.record.fields.get(result.join.via.id)! : result.field!;
+        items.push({ ...fieldItem(field, type.record.name), detail: `${fieldDetail(field)} · grouped` });
+      } else {
+        items.push({ label: name, kind: CompletionItemKind.Property, detail: `${typeName(result.type)} · ${aggregateDetail(result)}`, documentation: "Aggregate result of the summary search; read-only" });
+      }
+    }
+    return items;
+  }
   if (isLineType(type)) return [...type.sublist.fields.values()].map((field) => fieldItem(field, sublistName(type)));
-  // A reference has only its id; its fields are reached with `[...]`.
+  // A reference has its id, and display text only when the value carries it; its fields are reached with `[...]`.
   if (isReferenceType(type)) {
-    return [{ label: "id", kind: CompletionItemKind.Property, detail: "string · internal id", documentation: `Internal id of the referenced ${type.record.name}; read fields with 'ref[email, ...]' or load it with 'load ${type.record.name}(ref.id)'` }];
+    const items: CompletionItem[] = [
+      { label: "id", kind: CompletionItemKind.Property, detail: "string · internal id", documentation: `Internal id of the referenced ${type.record.name}; read fields with 'ref[email, ...]' or load it with 'load ${type.record.name}(ref.id)'` },
+    ];
+    if (type.text) items.push({ label: "text", kind: CompletionItemKind.Property, detail: "string · display text", documentation: `Display text of the referenced ${type.record.name}, as the backend supplied it with the id` });
+    return items;
   }
   // A projection has exactly the fields it was made with.
-  if (isProjectionType(type)) return type.fields.map((field) => fieldItem(field, type.record.name));
+  if (isProjectionType(type)) return type.fields.map((projected) => fieldItem(projected.field, type.record.name));
+  if (type === "Error") {
+    return ERROR_MEMBERS.map((member) => ({
+      label: member,
+      kind: CompletionItemKind.Property,
+      detail: `string · Error.${member}`,
+      documentation: member === "name" ? "The error's code, such as RCRD_DSNT_EXIST or SSS_INVALID_SRCH_FILTER" : "The error's description",
+    }));
+  }
   return [];
 }
 
@@ -171,6 +239,84 @@ function builtinItem(symbol: BuiltinSymbol): CompletionItem {
     : { label: symbol.builtin.name, kind: CompletionItemKind.Function, detail: builtinSignature(symbol.builtin) };
 }
 
+/**
+ * After `search saved [T]`: the saved searches the account snapshot knows,
+ * by script id, those over T when a type was written, plus string locals.
+ * Nothing is asked of NetSuite; a snapshot without saved searches offers
+ * only the locals.
+ */
+function savedSearchItems(doc: SemanticDocument, offset: number, record: string | undefined): CompletionItem[] {
+  const known = doc.schema
+    .listSavedSearches()
+    .filter((saved) => record === undefined || saved.record === record)
+    .map((saved) => ({
+      label: saved.id,
+      kind: CompletionItemKind.Value,
+      detail: `${saved.record} saved search${saved.searchType ? ` · standalone ${saved.searchType}` : ""}`,
+      documentation: `Saved search \`${saved.id}\` returning ${saved.record} rows, from the account snapshot`,
+    }));
+  return [...known, ...localItems(doc, offset).filter((item) => item.detail === "string")];
+}
+
+/** The record a search is over: by its written name, or through the snapshot for a saved search without one. */
+function searchedRecord(doc: SemanticDocument, record: string | undefined, savedSearch: string | undefined): RecordSchema | undefined {
+  const name = record ?? (savedSearch !== undefined ? doc.schema.getSavedSearch(savedSearch)?.record : undefined);
+  return name !== undefined ? doc.schema.getRecordByName(name) : undefined;
+}
+
+/** `or return` / `or { ... }`: resolving the optional a `first` search produced. */
+function orItems(): CompletionItem[] {
+  return [
+    { label: "or return", kind: CompletionItemKind.Keyword, detail: "resolve the optional: return when there is no row", insertText: "or return", insertTextFormat: InsertTextFormat.Snippet },
+    { label: "or {", kind: CompletionItemKind.Keyword, detail: "resolve the optional: a block that ends with return", insertText: "or {\n\t$0\n\treturn\n}", insertTextFormat: InsertTextFormat.Snippet },
+  ];
+}
+
+/** What each aggregate accepts, mirrored from the binder's table. */
+const AGGREGATE_ACCEPTS: Record<string, readonly FieldType[]> = {
+  sum: ["Number"],
+  avg: ["Number"],
+  min: ["Number", "Date", "Text"],
+  max: ["Number", "Date", "Text"],
+  count: ["Text", "Number", "Bool", "Date", "Ref", "Unknown"],
+};
+
+/** `sum`, `count`, ...: a `select` item, written as a named aggregate; with `alias` set, the name is already written. */
+function aggregateItems(alias?: string): CompletionItem[] {
+  const all: [string, string, string][] = [
+    ["sum", "sum(${1:field})", "the sum of a number field per group: number"],
+    ["count", "count()", "how many rows per group: number"],
+    ["min", "min(${1:field})", "the smallest number, date, or string per group"],
+    ["max", "max(${1:field})", "the largest number, date, or string per group"],
+    ["avg", "avg(${1:field})", "the average of a number field per group: number"],
+  ];
+  return all.map(([name, text, detail]) => ({
+    label: alias ? name : `${name}(...)`,
+    kind: CompletionItemKind.Function,
+    detail,
+    insertText: alias ? text : `\${1:${name === "count" ? "count" : "total"}} = ${text.replace("${1:", "${2:")}`,
+    insertTextFormat: InsertTextFormat.Snippet,
+    documentation: `An aggregate; named in select ('${alias ?? "total"} = ${name}(...)') and read as that name on each summary row`,
+  }));
+}
+
+/** The search clauses not yet written for the search above the cursor: each may appear once. */
+function clauseItems(used: string[]): CompletionItem[] {
+  const all: [string, string, string][] = [
+    ["where", "where ${1:condition}", "filter the rows"],
+    ["select", "select ${1:field}", "the fields the rows expose, and named aggregates"],
+    ["order by", "order by ${1:field}", "sort keys, each asc or desc"],
+    ["group by", "group by ${1:field}", "the summary buckets; the rows become one per group"],
+    ["limit", "limit ${1:100}", "at most this many rows, still a sequence"],
+    ["first", "first", "the first row, or none: one optional row"],
+  ];
+  // `first` and `limit` exclude each other, so either rules out both.
+  const cardinality = used.includes("first") || used.includes("limit");
+  return all
+    .filter(([label]) => !used.includes(label.split(" ")[0]!) && !(cardinality && (label === "first" || label === "limit")))
+    .map(([label, text, detail]) => ({ label, kind: CompletionItemKind.Keyword, detail, insertText: text, insertTextFormat: InsertTextFormat.Snippet }));
+}
+
 /** `query` and `search` are operations of the language, not registry built-ins; they complete beside `load` and the rest. */
 function queryOperationItems(): CompletionItem[] {
   return QUERY_OPERATIONS.map((operation) => ({
@@ -191,6 +337,28 @@ function localItems(doc: SemanticDocument, offset: number): CompletionItem[] {
     kind: CompletionItemKind.Variable,
     detail: describeLocal(local),
   }));
+}
+
+/**
+ * The fields reachable through a relationship, offered only where the
+ * search plans them as a join: a reference field of a search row, or a
+ * bare reference field in a search condition. A bare `Ref<T>` anywhere
+ * else keeps its `id`/`text` members only, since following it would mean
+ * a lookup the author must write.
+ */
+function joinedMemberItems(expression: BoundExpression): CompletionItem[] {
+  if (!isReferenceType(expression.type)) return [];
+  const viaRow = expression.kind === "FieldRead" && ((isRowRecord(expression.receiver.type) && expression.receiver.type.origin === "search") || isSummaryType(expression.receiver.type));
+  const viaCondition = expression.kind === "QueryField" && expression.type.text;
+  if (!viaRow && !viaCondition) return [];
+  const via = expression.kind === "FieldRead" || expression.kind === "QueryField" ? expression.field.id : "";
+  const target = expression.type.record;
+  // On a summary row only the grouped joined fields exist.
+  if (expression.kind === "FieldRead" && isSummaryType(expression.receiver.type)) {
+    const summary = expression.receiver.type;
+    return summary.fields.filter((f) => f.summary === "group" && f.join?.via.id === via).map((f) => ({ ...fieldItem(f.field!, `${target.name} via ${via}`), detail: `${fieldDetail(f.field!)} · grouped, joined` }));
+  }
+  return [...target.fields.values()].map((field) => ({ ...fieldItem(field, `${target.name} via ${via}`), detail: `${fieldDetail(field)} · joined` }));
 }
 
 /**
@@ -220,7 +388,9 @@ function projectionFieldItems(doc: SemanticDocument, bracketOffset: number, rece
  */
 function memberItems(doc: SemanticDocument, dotOffset: number, receiver: string[]): CompletionItem[] {
   const expression = expressionEndingAt(doc, dotOffset);
-  if (expression) return memberItemsOfType(expression.type);
+  // On a summary row, a relationship whose own reference was not grouped has only its grouped joined fields: no id or text.
+  const relationshipOnly = expression?.kind === "FieldRead" && isSummaryType(expression.receiver.type) && !summaryField(expression.receiver.type, expression.field.id);
+  if (expression) return [...(relationshipOnly ? [] : memberItemsOfType(expression.type)), ...joinedMemberItems(expression)];
 
   if (receiver.length !== 1) return [];
   const resolved = resolveNameAt(doc, receiver[0]!, dotOffset);

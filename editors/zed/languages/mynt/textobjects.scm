@@ -7,4 +7,7 @@
 (scheduled
   body: (block (_)* @function.inside)) @function.around
 
+(try_statement
+  body: (block (_)* @function.inside))
+
 (comment) @comment.around

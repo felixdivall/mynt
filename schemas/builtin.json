@@ -38,6 +38,28 @@
           "type": "Number",
           "label": "Total",
           "writable": false
+        },
+        "entity": {
+          "type": "Ref",
+          "label": "Customer",
+          "writable": true,
+          "refTarget": "Customer",
+          "selection": "single"
+        },
+        "amount": {
+          "type": "Number",
+          "label": "Amount",
+          "writable": false
+        },
+        "mainline": {
+          "type": "Bool",
+          "label": "Main Line",
+          "writable": false
+        },
+        "trandate": {
+          "type": "Date",
+          "label": "Date",
+          "writable": true
         }
       },
       "sublists": {
@@ -71,7 +93,8 @@
             }
           }
         }
-      }
+      },
+      "searchFamily": "transaction"
     },
     "customrecord_mynt_log": {
       "name": "MyntLog",
@@ -147,7 +170,8 @@
             }
           }
         }
-      }
+      },
+      "searchFamily": "transaction"
     }
   }
 }

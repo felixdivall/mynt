@@ -235,7 +235,7 @@ describe("built-ins and dependency inference", () => {
 });
 
 describe("load, locals, and record types", () => {
-  const LOAD = `scheduled {\n    let customer = load Customer("123")\n    log.debug(customer.email)\n}\n`;
+  const LOAD = `scheduled {\n    let customer = load Customer(123)\n    log.debug(customer.email)\n}\n`;
 
   it("binds load Customer(...) to a Customer-typed call with the resolved record", () => {
     const result = compileMynt(LOAD);
@@ -250,7 +250,7 @@ describe("load, locals, and record types", () => {
         kind: "BuiltinCall",
         builtin: { id: "load", module: "N/record", kind: "recordOperation", returns: "subject", result: "existing" },
         recordType: { kind: "RecordTypeReference", record: { id: "customer", suiteScriptType: "CUSTOMER" } },
-        arguments: [{ kind: "StringLiteral", value: "123" }],
+        arguments: [{ kind: "NumberLiteral", value: 123 }],
         type: { kind: "Record", record: { name: "Customer" } },
       },
     });
@@ -258,7 +258,7 @@ describe("load, locals, and record types", () => {
   });
 
   it("load SalesOrder(...) returns SalesOrder", () => {
-    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("456")\n    log.audit(order.memo)\n}\n`);
+    const result = compileMynt(`scheduled {\n    let order = load SalesOrder(456)\n    log.audit(order.memo)\n}\n`);
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain("type: record.Type.SALES_ORDER");
   });
@@ -285,26 +285,26 @@ describe("load, locals, and record types", () => {
   });
 
   it("MYNT1004 unknown field on a loaded record uses the Customer field diagnostic", () => {
-    const result = compileMynt(`scheduled {\n    let customer = load Customer("123")\n    log.debug(customer.notAField)\n}\n`);
+    const result = compileMynt(`scheduled {\n    let customer = load Customer(123)\n    log.debug(customer.notAField)\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1004"]);
     expect(result.diagnostics[0]!.message).toBe("Customer has no field 'notAField'");
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 24 });
   });
 
   it("MYNT1004 suggests a close field name", () => {
-    const result = compileMynt(`scheduled {\n    let customer = load Customer("123")\n    log.debug(customer.emial)\n}\n`);
+    const result = compileMynt(`scheduled {\n    let customer = load Customer(123)\n    log.debug(customer.emial)\n}\n`);
     expect(result.diagnostics[0]!.message).toBe("Customer has no field 'emial'. Did you mean 'email'?");
   });
 
   it("MYNT1017 rejects a duplicate local", () => {
-    const result = compileMynt(`scheduled {\n    let customer = load Customer("1")\n    let customer = load Customer("2")\n}\n`);
+    const result = compileMynt(`scheduled {\n    let customer = load Customer(1)\n    let customer = load Customer(2)\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1017"]);
     expect(result.diagnostics[0]!.message).toBe("'customer' is already declared in this scope as a local (line 2)");
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 9 });
   });
 
   it("MYNT1017 rejects shadowing the entry point parameter", () => {
-    const result = compileMynt(`beforeSubmit create (c: Customer) {\n    let c = load Customer("1")\n}\n`);
+    const result = compileMynt(`beforeSubmit create (c: Customer) {\n    let c = load Customer(1)\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1017"]);
     expect(result.diagnostics[0]!.message).toContain("as the entry point parameter");
   });
@@ -316,7 +316,7 @@ describe("load, locals, and record types", () => {
   });
 
   it("MYNT1010 suggests a close local name", () => {
-    const result = compileMynt(`scheduled {\n    let customer = load Customer("1")\n    log.debug(custome.email)\n}\n`);
+    const result = compileMynt(`scheduled {\n    let customer = load Customer(1)\n    log.debug(custome.email)\n}\n`);
     expect(result.diagnostics[0]!.message).toBe(
       "Unknown identifier 'custome'. Did you mean 'customer'? Names in scope: customer, copy, create, load, log, transform",
     );
@@ -355,7 +355,7 @@ describe("load, locals, and record types", () => {
   });
 
   it("MYNT1018 rejects a value where a record type belongs", () => {
-    const result = compileMynt(`scheduled {\n    let a = load Customer("1")\n    let b = load a("2")\n}\n`);
+    const result = compileMynt(`scheduled {\n    let a = load Customer(1)\n    let b = load a("2")\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1018"]);
     expect(result.diagnostics[0]!.message).toBe(
       "load expects a record type, but 'a' is a Customer value. Write the type name, like load Customer(...)",
@@ -376,14 +376,14 @@ describe("load, locals, and record types", () => {
     const asReceiver = compileMynt(`scheduled {\n    log.debug(Customer.email)\n}\n`);
     expect(errorCodes(asReceiver)).toEqual(["MYNT1011"]);
 
-    // `Customer("1")` is a record reference, not a call (see search.test.ts); a type argument on it still is an error.
-    const called = compileMynt(`scheduled {\n    Customer Invoice("1")\n}\n`);
+    // `Customer(1)` is a record reference, not a call (see search.test.ts); a type argument on it still is an error.
+    const called = compileMynt(`scheduled {\n    Customer Invoice(1)\n}\n`);
     expect(errorCodes(called)).toEqual(["MYNT1018"]);
     expect(called.diagnostics[0]!.message).toContain("a reference is written Customer(id)");
   });
 
   it("MYNT1009 fields can only be assigned on a named record", () => {
-    const result = compileMynt(`scheduled {\n    load Customer("1").email = "x"\n}\n`);
+    const result = compileMynt(`scheduled {\n    load Customer(1).email = "x"\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1009"]);
     expect(result.diagnostics[0]!.message).toBe(
       "Assign fields on a named record: declare it first, like 'let x = load Customer(...)', then write 'x.email'",
@@ -391,7 +391,7 @@ describe("load, locals, and record types", () => {
   });
 
   it("MYNT1014 a loaded record is not a string argument", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    log.debug(c)\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    log.debug(c)\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1014"]);
     expect(result.diagnostics[0]!.message).toBe("log.debug argument 1 must be string, but received Customer");
   });
@@ -402,14 +402,14 @@ describe("load, locals, and record types", () => {
   });
 
   it("infers only N/record for a bare load", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("123")\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(123)\n}\n`);
     expect(result.diagnostics).toEqual([]);
     expect([...result.unit!.dependencies]).toEqual(["N/record"]);
     expect(result.output).toContain('define(["N/record"], (record) => {');
   });
 
   it("composes N/log and N/record in sorted order, each once", () => {
-    const result = compileMynt(`scheduled {\n    let a = load Customer("1")\n    let b = load SalesOrder("2")\n    log.debug(a.email)\n    log.audit(b.memo)\n}\n`);
+    const result = compileMynt(`scheduled {\n    let a = load Customer(1)\n    let b = load SalesOrder(2)\n    log.debug(a.email)\n    log.audit(b.memo)\n}\n`);
     expect(result.diagnostics).toEqual([]);
     expect([...result.unit!.dependencies].sort()).toEqual(["N/log", "N/record"]);
     expect(result.output).toContain('define(["N/log", "N/record"], (log, record) => {');
@@ -417,7 +417,7 @@ describe("load, locals, and record types", () => {
 
   it("load works inside a user event and keeps the entry point record writable", () => {
     const result = compileMynt(
-      `beforeSubmit create (c: Customer) {\n    let other = load Customer("9")\n    c.comments = other.email\n}\n`,
+      `beforeSubmit create (c: Customer) {\n    let other = load Customer(9)\n    c.comments = other.email\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
     expect([...result.unit!.dependencies]).toEqual(["N/record"]);
@@ -426,7 +426,7 @@ describe("load, locals, and record types", () => {
 });
 
 describe("record lifecycle: writes and save", () => {
-  const LIFECYCLE = `scheduled {\n    let customer = load Customer("123")\n    customer.comments = "Updated by Mynt"\n    save customer\n}\n`;
+  const LIFECYCLE = `scheduled {\n    let customer = load Customer(123)\n    customer.comments = "Updated by Mynt"\n    save customer\n}\n`;
 
   it("binds load, write, and save on a loaded record", () => {
     const result = compileMynt(LIFECYCLE);
@@ -447,7 +447,7 @@ describe("record lifecycle: writes and save", () => {
   });
 
   it("origin is carried on the type: context for parameters, loaded for load results", () => {
-    const ue = compileMynt(`beforeSubmit create (c: Customer) {\n    let other = load Customer("1")\n    c.comments = other.email\n    save other\n}\n`);
+    const ue = compileMynt(`beforeSubmit create (c: Customer) {\n    let other = load Customer(1)\n    c.comments = other.email\n    save other\n}\n`);
     expect(ue.diagnostics).toEqual([]);
     const unit = ue.unit!;
     if (unit.kind !== "UserEvent") throw new Error("expected user event");
@@ -460,7 +460,7 @@ describe("record lifecycle: writes and save", () => {
   });
 
   it("origin and record type are preserved through local references", () => {
-    const result = compileMynt(`scheduled {\n    let a = load SalesOrder("1")\n    a.memo = "x"\n    save a\n}\n`);
+    const result = compileMynt(`scheduled {\n    let a = load SalesOrder(1)\n    a.memo = "x"\n    save a\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
     if (unit.kind !== "Scheduled") throw new Error("expected scheduled");
@@ -470,13 +470,13 @@ describe("record lifecycle: writes and save", () => {
   });
 
   it("MYNT1005 read-only fields stay read-only on loaded records", () => {
-    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("123")\n    order.total = "100"\n    save order\n}\n`);
+    const result = compileMynt(`scheduled {\n    let order = load SalesOrder(123)\n    order.total = "100"\n    save order\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1005"]);
     expect(result.diagnostics[0]!.message).toBe("SalesOrder.total is read-only and cannot be assigned");
   });
 
   it("MYNT1006 field type checks apply to loaded records", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let o = load SalesOrder("2")\n    c.email = o.total\n    save c\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    let o = load SalesOrder(2)\n    c.email = o.total\n    save c\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1006"]);
     expect(result.diagnostics[0]!.message).toBe("Cannot assign number to Customer.email, which is string");
   });
@@ -500,18 +500,18 @@ describe("record lifecycle: writes and save", () => {
 
   it("afterSubmit may load, modify, and save its own copy", () => {
     const result = compileMynt(
-      `afterSubmit edit (customer: Customer) {\n    let fresh = load Customer("1")\n    fresh.comments = "x"\n    save fresh\n}\n`,
+      `afterSubmit edit (customer: Customer) {\n    let fresh = load Customer(1)\n    fresh.comments = "x"\n    save fresh\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain("fresh.save();");
   });
 
   it("MYNT1019 saving a non-record", () => {
-    const local = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let e = c.email\n    save e\n}\n`);
+    const local = compileMynt(`scheduled {\n    let c = load Customer(1)\n    let e = c.email\n    save e\n}\n`);
     expect(errorCodes(local)).toEqual(["MYNT1019"]);
     expect(local.diagnostics[0]!.message).toBe("'e' is a string value and cannot be saved. Only records can be saved");
 
-    const expr = compileMynt(`scheduled {\n    let c = load Customer("1")\n    save c.email\n}\n`);
+    const expr = compileMynt(`scheduled {\n    let c = load Customer(1)\n    save c.email\n}\n`);
     expect(errorCodes(expr)).toEqual(["MYNT1019"]);
     expect(expr.diagnostics[0]!.message).toBe("A string value cannot be saved. Only records can be saved");
   });
@@ -523,7 +523,7 @@ describe("record lifecycle: writes and save", () => {
   });
 
   it("duplicate saves are allowed", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    save c\n    save c\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    save c\n    save c\n}\n`);
     expect(result.diagnostics).toEqual([]);
   });
 
@@ -541,7 +541,7 @@ describe("record lifecycle: writes and save", () => {
   });
 
   it("a local named save still works", () => {
-    const result = compileMynt(`scheduled {\n    let save = load Customer("1")\n    save.comments = "x"\n    save save\n}\n`);
+    const result = compileMynt(`scheduled {\n    let save = load Customer(1)\n    save.comments = "x"\n    save save\n}\n`);
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain("save.save();");
   });
@@ -554,7 +554,7 @@ describe("MYNT2001 unsaved mutation warning", () => {
   }
 
   it("warns when a loaded record is modified but never saved, and still compiles", () => {
-    const { result, warnings: w } = warnings(`scheduled {\n    let customer = load Customer("123")\n    customer.comments = "Changed"\n}\n`);
+    const { result, warnings: w } = warnings(`scheduled {\n    let customer = load Customer(123)\n    customer.comments = "Changed"\n}\n`);
     expect(errorCodes(result)).toEqual([]);
     expect(result.output).toBeDefined();
     expect(w).toHaveLength(1);
@@ -565,14 +565,14 @@ describe("MYNT2001 unsaved mutation warning", () => {
   });
 
   it("warns when a write follows the last save", () => {
-    const { warnings: w } = warnings(`scheduled {\n    let c = load Customer("1")\n    c.comments = "a"\n    save c\n    c.comments = "b"\n}\n`);
+    const { warnings: w } = warnings(`scheduled {\n    let c = load Customer(1)\n    c.comments = "a"\n    save c\n    c.comments = "b"\n}\n`);
     expect(w).toHaveLength(1);
     expect(w[0]!.span.start.line).toBe(5);
     expect(w[0]!.message).toContain("modified after its last save");
   });
 
   it("does not warn when every write precedes a save", () => {
-    const { warnings: w } = warnings(`scheduled {\n    let c = load Customer("1")\n    c.comments = "a"\n    c.email = "b"\n    save c\n}\n`);
+    const { warnings: w } = warnings(`scheduled {\n    let c = load Customer(1)\n    c.comments = "a"\n    c.email = "b"\n    save c\n}\n`);
     expect(w).toEqual([]);
   });
 
@@ -582,7 +582,7 @@ describe("MYNT2001 unsaved mutation warning", () => {
   });
 
   it("tracks records independently", () => {
-    const { warnings: w } = warnings(`scheduled {\n    let a = load Customer("1")\n    let b = load SalesOrder("2")\n    a.comments = "x"\n    b.memo = "y"\n    save a\n}\n`);
+    const { warnings: w } = warnings(`scheduled {\n    let a = load Customer(1)\n    let b = load SalesOrder(2)\n    a.comments = "x"\n    b.memo = "y"\n    save a\n}\n`);
     expect(w).toHaveLength(1);
     expect(w[0]!.message).toContain("'b' is modified but never saved");
   });
@@ -590,7 +590,7 @@ describe("MYNT2001 unsaved mutation warning", () => {
 
 describe("comparisons and if", () => {
   it("binds string == string to a boolean comparison with both operand types resolved", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email == "" {\n    }\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
     if (unit.kind !== "Scheduled") throw new Error();
@@ -612,7 +612,7 @@ describe("comparisons and if", () => {
 
   it("binds every operator to its operation", () => {
     const result = compileMynt(
-      `scheduled {\n    let o = load SalesOrder("1")\n    if o.memo != "" { }\n    if o.total < 1 { }\n    if o.total <= 1 { }\n    if o.total > 1 { }\n    if o.total >= 1 { }\n    if o.total == 10 { }\n}\n`,
+      `scheduled {\n    let o = load SalesOrder(1)\n    if o.memo != "" { }\n    if o.total < 1 { }\n    if o.total <= 1 { }\n    if o.total > 1 { }\n    if o.total >= 1 { }\n    if o.total == 10 { }\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
@@ -624,7 +624,7 @@ describe("comparisons and if", () => {
   });
 
   it("a comparison can initialize a boolean local", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let missing = c.email == ""\n    if missing {\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    let missing = c.email == ""\n    if missing {\n    }\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
     if (unit.kind !== "Scheduled") throw new Error();
@@ -632,34 +632,41 @@ describe("comparisons and if", () => {
     expect(unit.entryPoint.body[2]).toMatchObject({ kind: "If", condition: { kind: "LocalReference", type: "Bool" } });
   });
 
-  it("MYNT1022 rejects comparing string with number", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email == 42 {\n    }\n}\n`);
+  it("MYNT1022 rejects strictly comparing string with number; loosely it coerces, as in JavaScript", () => {
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email === 42 {\n    }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1022"]);
-    expect(result.diagnostics[0]!.message).toBe("Cannot compare string with number: both sides of '==' must have the same type");
-    expect(result.diagnostics[0]!.span).toMatchObject({ start: { line: 3, column: 8 }, end: { line: 3, column: 21 } });
+    expect(result.diagnostics[0]!.message).toBe("Strict equality cannot compare string with number. Use '==' if a coercive comparison is intended, or compare values of one type");
+    expect(result.diagnostics[0]!.span).toMatchObject({ start: { line: 3, column: 8 }, end: { line: 3, column: 22 } });
+    const loose = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email == 42 {\n    }\n}\n`);
+    expect(loose.diagnostics).toEqual([]);
+    expect(loose.output).toContain(`}) == 42`);
   });
 
   it("MYNT1022 rejects comparing a record with string", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c == "" {\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c == "" {\n    }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1022"]);
-    expect(result.diagnostics[0]!.message).toBe("Cannot compare Customer with string: both sides of '==' must have the same type");
+    expect(result.diagnostics[0]!.message).toBe("Cannot compare Customer with string: loose equality ('==', '!=') coerces only between string, number, and boolean");
+    const strict = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c === "" {\n    }\n}\n`);
+    expect(strict.diagnostics[0]!.message).toBe("Cannot compare Customer with string: both sides of '===' must have the same type");
   });
 
   it("MYNT1023 rejects ordering string", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email < "abc" {\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email < "abc" {\n    }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1023"]);
     expect(result.diagnostics[0]!.message).toBe("'<' is not defined for string values; ordering comparisons require number operands");
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 16 });
   });
 
   it("MYNT1023 rejects comparing records, Bools, and Void", () => {
-    const records = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c == c {\n    }\n}\n`);
+    const records = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c == c {\n    }\n}\n`);
     expect(errorCodes(records)).toEqual(["MYNT1023"]);
-    expect(records.diagnostics[0]!.message).toBe("'==' is not defined for records (Customer); comparisons are defined for string and number values");
+    expect(records.diagnostics[0]!.message).toBe("'==' is not defined for records (Customer); equality is defined for string, number, boolean, and references");
 
-    const bools = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let a = c.email == ""\n    if a == a {\n    }\n}\n`);
-    expect(errorCodes(bools)).toEqual(["MYNT1023"]);
-    expect(bools.diagnostics[0]!.message).toContain("'==' is not defined for boolean values");
+    // Booleans compare in both modes now, as in JavaScript.
+    const bools = compileMynt(`scheduled {\n    let c = load Customer(1)\n    let a = c.email == ""\n    if a == a {\n    }\n    if a === true {\n    }\n}\n`);
+    expect(bools.diagnostics).toEqual([]);
+    expect(bools.output).toContain("if (a == a) {");
+    expect(bools.output).toContain("if (a === true) {");
 
     const voids = compileMynt(`scheduled {\n    if log.debug("a") == log.debug("b") {\n    }\n}\n`);
     expect(errorCodes(voids)).toEqual(["MYNT1023"]);
@@ -667,14 +674,14 @@ describe("comparisons and if", () => {
   });
 
   it("MYNT1021 if requires a boolean condition: no truthiness", () => {
-    const text = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email {\n    }\n}\n`);
+    const text = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email {\n    }\n}\n`);
     expect(errorCodes(text)).toEqual(["MYNT1021"]);
     expect(text.diagnostics[0]!.message).toBe(
       "if condition must be boolean, but received string. Mynt has no truthiness: compare the value explicitly, for example with == or !=",
     );
     expect(text.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 8 });
 
-    const record = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c {\n    }\n}\n`);
+    const record = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c {\n    }\n}\n`);
     expect(record.diagnostics[0]!.message).toContain("if condition must be boolean, but received Customer");
 
     const voidCall = compileMynt(`scheduled {\n    if log.debug("x") {\n    }\n}\n`);
@@ -682,23 +689,23 @@ describe("comparisons and if", () => {
   });
 
   it("reports errors inside both branches even when the condition is bad", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email {\n        c.nope = "x"\n    } else {\n        c.entityid = "y"\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email {\n        c.nope = "x"\n    } else {\n        c.entityid = "y"\n    }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1021", "MYNT1004", "MYNT1005"]);
   });
 
   it("reports errors in both operands of a comparison", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.nope == c.nada {\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.nope == c.nada {\n    }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1004", "MYNT1004"]);
   });
 
   it("a comparison is bound but has nothing to emit as a statement", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    c.email == ""\n    c.nope == ""\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    c.email == ""\n    c.nope == ""\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1004"]);
   });
 
   it("field access, mutation, and save work inside a branch, and the record stays loaded throughout", () => {
     const result = compileMynt(
-      `scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        log.debug(c.entityid)\n        c.comments = "x"\n        save c\n    } else {\n        c.comments = "y"\n        save c\n    }\n    c.comments = "z"\n    save c\n}\n`,
+      `scheduled {\n    let c = load Customer(1)\n    if c.email == "" {\n        log.debug(c.entityid)\n        c.comments = "x"\n        save c\n    } else {\n        c.comments = "y"\n        save c\n    }\n    c.comments = "z"\n    save c\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
@@ -730,36 +737,36 @@ describe("comparisons and if", () => {
 
 describe("block scope", () => {
   it("MYNT1010 a let inside an if is not visible after the block", () => {
-    const result = compileMynt(`scheduled {\n    let a = load Customer("1")\n    if a.email == "" {\n        let b = load Customer("2")\n    }\n    save b\n}\n`);
+    const result = compileMynt(`scheduled {\n    let a = load Customer(1)\n    if a.email == "" {\n        let b = load Customer(2)\n    }\n    save b\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1010"]);
     expect(result.diagnostics[0]!.message).toBe("Unknown identifier 'b'. Did you mean 'a'? Names in scope: a, copy, create, load, log, transform");
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 6, column: 10 });
   });
 
   it("a block sees enclosing locals", () => {
-    const result = compileMynt(`scheduled {\n    let a = load Customer("1")\n    if a.email == "" {\n        if a.comments == "" {\n            save a\n        }\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let a = load Customer(1)\n    if a.email == "" {\n        if a.comments == "" {\n            save a\n        }\n    }\n}\n`);
     expect(result.diagnostics).toEqual([]);
   });
 
   it("MYNT1017 a block cannot shadow an enclosing local or the parameter", () => {
-    const local = compileMynt(`scheduled {\n    let a = load Customer("1")\n    if a.email == "" {\n        let a = load Customer("2")\n    }\n}\n`);
+    const local = compileMynt(`scheduled {\n    let a = load Customer(1)\n    if a.email == "" {\n        let a = load Customer(2)\n    }\n}\n`);
     expect(errorCodes(local)).toEqual(["MYNT1017"]);
     expect(local.diagnostics[0]!.message).toBe("'a' is already declared in an enclosing scope as a local (line 2)");
 
-    const parameter = compileMynt(`beforeSubmit edit (c: Customer) {\n    if c.email == "" {\n        let c = load Customer("2")\n    }\n}\n`);
+    const parameter = compileMynt(`beforeSubmit edit (c: Customer) {\n    if c.email == "" {\n        let c = load Customer(2)\n    }\n}\n`);
     expect(errorCodes(parameter)).toEqual(["MYNT1017"]);
     expect(parameter.diagnostics[0]!.message).toBe("'c' is already declared in an enclosing scope as the entry point parameter (line 1)");
   });
 
   it("sibling blocks may declare the same name", () => {
     const result = compileMynt(
-      `scheduled {\n    let a = load Customer("1")\n    if a.email == "" {\n        let n = "x"\n        log.debug(n)\n    } else {\n        let n = "y"\n        log.debug(n)\n    }\n    if a.email == "" {\n        let n = "z"\n        log.debug(n)\n    }\n}\n`,
+      `scheduled {\n    let a = load Customer(1)\n    if a.email == "" {\n        let n = "x"\n        log.debug(n)\n    } else {\n        let n = "y"\n        log.debug(n)\n    }\n    if a.email == "" {\n        let n = "z"\n        log.debug(n)\n    }\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
   });
 
   it("MYNT1017 duplicates within one block are still caught", () => {
-    const result = compileMynt(`scheduled {\n    let a = load Customer("1")\n    if a.email == "" {\n        let n = "x"\n        let n = "y"\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let a = load Customer(1)\n    if a.email == "" {\n        let n = "x"\n        let n = "y"\n    }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1017"]);
     expect(result.diagnostics[0]!.message).toBe("'n' is already declared in this scope as a local (line 4)");
   });
@@ -773,18 +780,18 @@ describe("MYNT2001 across control flow", () => {
   }
 
   it("no warning: the mutated path saves and the other path has no mutation", () => {
-    expect(warnings(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        c.comments = "Missing"\n        save c\n    }\n}\n`)).toEqual([]);
+    expect(warnings(`scheduled {\n    let c = load Customer(1)\n    if c.email == "" {\n        c.comments = "Missing"\n        save c\n    }\n}\n`)).toEqual([]);
   });
 
   it("warning: mutation in a branch with no save anywhere", () => {
-    const w = warnings(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        c.comments = "Missing"\n    }\n}\n`);
+    const w = warnings(`scheduled {\n    let c = load Customer(1)\n    if c.email == "" {\n        c.comments = "Missing"\n    }\n}\n`);
     expect(w).toHaveLength(1);
     expect(w[0]).toMatchObject({ code: "MYNT2001", span: { start: { line: 4, column: 9 } } });
     expect(w[0]!.message).toBe("'c' is modified but never saved; changes to a loaded Customer are discarded unless you 'save c'");
   });
 
   it("warning: unconditional mutation, conditional save", () => {
-    const w = warnings(`scheduled {\n    let c = load Customer("1")\n    c.comments = "Changed"\n    if c.email == "" {\n        save c\n    }\n}\n`);
+    const w = warnings(`scheduled {\n    let c = load Customer(1)\n    c.comments = "Changed"\n    if c.email == "" {\n        save c\n    }\n}\n`);
     expect(w).toHaveLength(1);
     expect(w[0]!.span.start).toMatchObject({ line: 3, column: 5 });
     expect(w[0]!.message).toBe(
@@ -793,41 +800,41 @@ describe("MYNT2001 across control flow", () => {
   });
 
   it("no warning: every path saves after the mutation", () => {
-    expect(warnings(`scheduled {\n    let c = load Customer("1")\n    c.comments = "Changed"\n    if c.email == "" {\n        save c\n    } else {\n        save c\n    }\n}\n`)).toEqual([]);
+    expect(warnings(`scheduled {\n    let c = load Customer(1)\n    c.comments = "Changed"\n    if c.email == "" {\n        save c\n    } else {\n        save c\n    }\n}\n`)).toEqual([]);
   });
 
   it("warning: a mutation after the last save still warns", () => {
-    const w = warnings(`scheduled {\n    let c = load Customer("1")\n    c.comments = "A"\n    save c\n    c.comments = "B"\n}\n`);
+    const w = warnings(`scheduled {\n    let c = load Customer(1)\n    c.comments = "A"\n    save c\n    c.comments = "B"\n}\n`);
     expect(w).toHaveLength(1);
     expect(w[0]!.span.start.line).toBe(5);
     expect(w[0]!.message).toContain("modified after its last save");
   });
 
   it("no warning: a later unconditional save covers every path", () => {
-    expect(warnings(`scheduled {\n    let c = load Customer("1")\n    c.comments = "A"\n    if c.email == "" {\n        save c\n    }\n    c.comments = "B"\n    save c\n}\n`)).toEqual([]);
+    expect(warnings(`scheduled {\n    let c = load Customer(1)\n    c.comments = "A"\n    if c.email == "" {\n        save c\n    }\n    c.comments = "B"\n    save c\n}\n`)).toEqual([]);
   });
 
   it("warning: mutation in then, save only in else", () => {
-    const w = warnings(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        c.comments = "x"\n    } else {\n        save c\n    }\n}\n`);
+    const w = warnings(`scheduled {\n    let c = load Customer(1)\n    if c.email == "" {\n        c.comments = "x"\n    } else {\n        save c\n    }\n}\n`);
     expect(w).toHaveLength(1);
     expect(w[0]!.span.start.line).toBe(4);
     expect(w[0]!.message).toContain("never saved");
   });
 
   it("no warning: a save inside a nested branch on the mutated path", () => {
-    expect(warnings(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        c.comments = "x"\n        if c.comments == "x" {\n            save c\n        } else {\n            save c\n        }\n    }\n}\n`)).toEqual([]);
+    expect(warnings(`scheduled {\n    let c = load Customer(1)\n    if c.email == "" {\n        c.comments = "x"\n        if c.comments == "x" {\n            save c\n        } else {\n            save c\n        }\n    }\n}\n`)).toEqual([]);
   });
 
   it("one warning per write, in source order, and none for context records in branches", () => {
     const w = warnings(
-      `beforeSubmit edit (ctx: Customer) {\n    let c = load Customer("1")\n    if ctx.email == "" {\n        ctx.comments = "ok"\n        c.comments = "a"\n    } else {\n        c.email = "b"\n    }\n    if ctx.email == "" {\n        save c\n    }\n}\n`,
+      `beforeSubmit edit (ctx: Customer) {\n    let c = load Customer(1)\n    if ctx.email == "" {\n        ctx.comments = "ok"\n        c.comments = "a"\n    } else {\n        c.email = "b"\n    }\n    if ctx.email == "" {\n        save c\n    }\n}\n`,
     );
     expect(w.map((d) => d.span.start.line)).toEqual([5, 7]);
     expect(w.every((d) => d.message.includes("not every execution path"))).toBe(true);
   });
 
   it("warnings do not block output", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        c.comments = "Missing"\n    }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email == "" {\n        c.comments = "Missing"\n    }\n}\n`);
     expect(result.output).toContain("c.setValue(");
     expect(result.output).not.toContain(".save()");
   });
@@ -843,7 +850,7 @@ describe("logical operators, not, grouping, and boolean literals", () => {
     if (last.kind !== "If") throw new Error();
     return last.condition;
   }
-  const PRELUDE = `let c = load Customer("1")\n    let a = c.email == ""\n    let b = c.comments == ""\n`;
+  const PRELUDE = `let c = load Customer(1)\n    let a = c.email == ""\n    let b = c.comments == ""\n`;
 
   it("binds boolean && boolean and boolean || boolean to Logical with type boolean", () => {
     expect(conditionOf(`scheduled {\n    ${PRELUDE}    if a && b { }\n}\n`)).toMatchObject({
@@ -861,7 +868,7 @@ describe("logical operators, not, grouping, and boolean literals", () => {
   });
 
   it("binds a condition composed of several comparisons", () => {
-    expect(conditionOf(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" || c.comments == "Blocked" { }\n}\n`)).toMatchObject({
+    expect(conditionOf(`scheduled {\n    let c = load Customer(1)\n    if c.email == "" || c.comments == "Blocked" { }\n}\n`)).toMatchObject({
       kind: "Logical",
       operation: "Or",
       left: { kind: "Comparison", operation: "Equal", operandType: "Text" },
@@ -889,23 +896,23 @@ describe("logical operators, not, grouping, and boolean literals", () => {
   });
 
   it("MYNT1024 rejects non-boolean logical operands, one diagnostic per operand", () => {
-    const left = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email && true { }\n}\n`);
+    const left = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email && true { }\n}\n`);
     expect(errorCodes(left)).toEqual(["MYNT1024"]);
     expect(left.diagnostics[0]!.message).toBe(
       "operator '&&' requires boolean operands, but the left operand is string. Mynt has no truthiness: compare the value explicitly, for example with == or !=",
     );
     expect(left.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 8 });
 
-    const both = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email || c.comments { }\n}\n`);
+    const both = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email || c.comments { }\n}\n`);
     expect(errorCodes(both)).toEqual(["MYNT1024", "MYNT1024"]);
     expect(both.diagnostics[1]!.message).toContain("the right operand is string");
 
-    const record = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c && true { }\n}\n`);
+    const record = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c && true { }\n}\n`);
     expect(record.diagnostics[0]!.message).toContain("the left operand is Customer");
   });
 
   it("MYNT1024 rejects ! on a non-boolean", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if !c.email { }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if !c.email { }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1024"]);
     expect(result.diagnostics[0]!.message).toBe(
       "operator '!' requires boolean, but received string. Mynt has no truthiness: compare the value explicitly, for example with == or !=",
@@ -913,29 +920,30 @@ describe("logical operators, not, grouping, and boolean literals", () => {
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 9 });
   });
 
-  it("MYNT1023 boolean equality is rejected with a hint to use the boolean directly", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    let a = c.email == ""\n    if a == true { }\n}\n`);
-    expect(errorCodes(result)).toEqual(["MYNT1023"]);
-    expect(result.diagnostics[0]!.message).toBe(
-      "'==' is not defined for boolean values; comparisons are defined for string and number values. Use a boolean directly as a condition: 'if x' or 'if !x'",
-    );
+  it("boolean equality is allowed in both modes, and loose boolean/number coerces as JavaScript does", () => {
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    let a = c.email == ""\n    if a == true { }\n    if a == 1 { }\n    if a !== false { }\n}\n`);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.output).toContain("if (a == 1) {");
+    expect(result.output).toContain("if (a !== false) {");
+    const strict = compileMynt(`scheduled {\n    let a = true\n    if a === 1 { }\n}\n`);
+    expect(errorCodes(strict)).toEqual(["MYNT1022"]);
   });
 
   it("a grouped comparison chain fails type checking rather than parsing", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if (c.email == "") == c.comments { }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if (c.email == "") === c.comments { }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1022"]);
-    expect(result.diagnostics[0]!.message).toBe("Cannot compare boolean with string: both sides of '==' must have the same type");
+    expect(result.diagnostics[0]!.message).toBe("Strict equality cannot compare boolean with string. Use '==' if a coercive comparison is intended, or compare values of one type");
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 3, column: 8 });
   });
 
   it("errors inside both operands of a logical expression are all reported", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.nope == "" || !c.nada { }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.nope == "" || !c.nada { }\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1004", "MYNT1004"]);
   });
 });
 
 describe("emitter: precedence-aware parenthesization", () => {
-  const PRELUDE = `let c = load Customer("1")\n    let a = c.email == ""\n    let b = c.comments == ""\n    let d = true\n`;
+  const PRELUDE = `let c = load Customer(1)\n    let a = c.email == ""\n    let b = c.comments == ""\n    let d = true\n`;
   function ifLine(condition: string): string {
     const result = compileMynt(`scheduled {\n    ${PRELUDE}    if ${condition} { }\n}\n`);
     expect(result.diagnostics).toEqual([]);
@@ -958,7 +966,7 @@ describe("emitter: precedence-aware parenthesization", () => {
   });
 
   it("parenthesizes a comparison under not", () => {
-    const result = compileMynt(`scheduled {\n    ${PRELUDE}    if !(c.email == "x") { }\n}\n`);
+    const result = compileMynt(`scheduled {\n    ${PRELUDE}    if !(c.email === "x") { }\n}\n`);
     expect(result.output).toContain(`!(\n                c.getValue({\n                    fieldId: "email"\n                }) === "x"\n            )`);
     expect(ifLine(`!a`)).toBe("if (!a) {");
     expect(ifLine(`!!a`)).toBe("if (!!a) {");
@@ -966,18 +974,21 @@ describe("emitter: precedence-aware parenthesization", () => {
     expect(ifLine(`!a || b`)).toBe("if (!a || b) {");
   });
 
-  it("emits strict equality and boolean literals", () => {
+  it("emits each equality as written, and boolean literals", () => {
     expect(ifLine(`false`)).toBe("if (false) {");
     expect(ifLine(`d || !d`)).toBe("if (d || !d) {");
     expect(ifLine(`c.email != "x"`)).toBe("if (");
-    const strict = compileMynt(`scheduled {\n    ${PRELUDE}    if c.email != "x" { }\n}\n`);
+    const strict = compileMynt(`scheduled {\n    ${PRELUDE}    if c.email !== "x" { }\n    if c.email != "x" { }\n    if c.email === "x" { }\n    if c.email == "x" { }\n}\n`);
     expect(strict.output).toContain(`}) !== "x"`);
+    expect(strict.output).toContain(`}) != "x"`);
+    expect(strict.output).toContain(`}) === "x"`);
+    expect(strict.output).toContain(`}) == "x"`);
     const result = compileMynt(`scheduled {\n    let enabled = true\n    if enabled { }\n}\n`);
     expect(result.output).toContain("const enabled = true;");
   });
 
   it("breaks long logical conditions after the operator", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" || c.comments == "Blocked" { }\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    if c.email === "" || c.comments === "Blocked" { }\n}\n`);
     expect(result.output).toContain(`}) === "" ||\n            c.getValue({`);
   });
 });
@@ -990,14 +1001,14 @@ describe("MYNT2001 is independent of condition structure", () => {
   }
 
   it("a compound condition changes nothing about the mutated path", () => {
-    expect(warnings(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" || c.comments == "Blocked" {\n        c.comments = "x"\n        save c\n    }\n}\n`)).toEqual([]);
-    const w = warnings(`scheduled {\n    let c = load Customer("1")\n    if !(c.email == "") && (c.comments == "" || true) {\n        c.comments = "x"\n    }\n}\n`);
+    expect(warnings(`scheduled {\n    let c = load Customer(1)\n    if c.email == "" || c.comments == "Blocked" {\n        c.comments = "x"\n        save c\n    }\n}\n`)).toEqual([]);
+    const w = warnings(`scheduled {\n    let c = load Customer(1)\n    if !(c.email == "") && (c.comments == "" || true) {\n        c.comments = "x"\n    }\n}\n`);
     expect(w).toHaveLength(1);
     expect(w[0]!.message).toContain("never saved");
   });
 
   it("a constant condition is still a branch", () => {
-    const w = warnings(`scheduled {\n    let c = load Customer("1")\n    c.comments = "x"\n    if true {\n        save c\n    }\n}\n`);
+    const w = warnings(`scheduled {\n    let c = load Customer(1)\n    c.comments = "x"\n    if true {\n        save c\n    }\n}\n`);
     expect(w).toHaveLength(1);
     expect(w[0]!.message).toContain("not every execution path");
   });
@@ -1035,7 +1046,7 @@ describe("create", () => {
     expect(errorCodes(bare)).toEqual(["MYNT1006"]);
     expect(bare.diagnostics[0]!.message).toBe("'create' is a built-in function and must be called, like 'create Customer'");
     expect(compileMynt(`scheduled {\n    let c = load\n}\n`).diagnostics[0]!.message).toContain("like 'load Customer(...)'");
-    const args = compileMynt(`scheduled {\n    let c = create Customer("1")\n}\n`);
+    const args = compileMynt(`scheduled {\n    let c = create Customer(1)\n}\n`);
     expect(errorCodes(args)).toEqual(["MYNT1013"]);
     expect(args.diagnostics[0]!.message).toBe("create expects 0 arguments, but received 1");
     expect(errorCodes(compileMynt(`scheduled {\n    let c = load Customer\n}\n`))).toEqual(["MYNT1013"]);
@@ -1066,7 +1077,7 @@ describe("create", () => {
   });
 
   it("origin is a capability: created and loaded records are both owned, context is not", () => {
-    const result = compileMynt(`beforeSubmit edit (ctx: Customer) {\n    let a = load Customer("1")\n    let b = create Customer\n    save a\n    save b\n}\n`);
+    const result = compileMynt(`beforeSubmit edit (ctx: Customer) {\n    let a = load Customer(1)\n    let b = create Customer\n    save a\n    save b\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const origins = result.unit!.symbols.map((s) => `${s.local.name}:${isRecordType(s.local.type) ? s.local.type.origin : "?"}`);
     expect(origins).toEqual(["ctx:context", "a:owned", "b:owned"]);
@@ -1114,8 +1125,8 @@ describe("MYNT2001 for created records", () => {
   });
 
   it("a loaded record untouched and unsaved does not warn; a created one does", () => {
-    expect(warnings(`scheduled {\n    let c = load Customer("1")\n}\n`)).toEqual([]);
-    expect(warnings(`scheduled {\n    let a = load Customer("1")\n    let b = create Customer\n}\n`).map((d) => d.message)).toEqual([
+    expect(warnings(`scheduled {\n    let c = load Customer(1)\n}\n`)).toEqual([]);
+    expect(warnings(`scheduled {\n    let a = load Customer(1)\n    let b = create Customer\n}\n`).map((d) => d.message)).toEqual([
       "'b' is created but never saved; a new Customer does not exist in NetSuite until you 'save b'",
     ]);
   });
@@ -1123,7 +1134,7 @@ describe("MYNT2001 for created records", () => {
 
 describe("bound spans and expression table", () => {
   it("records field, callee, namespace, and record-type spans", () => {
-    const source = `scheduled {\n    let c = load Customer("1")\n    c.comments = c.email\n    log.debug(c.email)\n    save c\n}\n`;
+    const source = `scheduled {\n    let c = load Customer(1)\n    c.comments = c.email\n    log.debug(c.email)\n    save c\n}\n`;
     const result = compileMynt(source);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
@@ -1144,11 +1155,11 @@ describe("bound spans and expression table", () => {
   });
 
   it("keeps every bound expression, including those in statements that failed", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    c.nope\n    load Customer("2").nope\n    log.debug(c.nope)\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    c.nope\n    load Customer(2).nope\n    log.debug(c.nope)\n}\n`);
     expect(errorCodes(result)).toEqual(["MYNT1004", "MYNT1004", "MYNT1004"]);
     const kinds = result.unit!.expressions.map((e) => `${e.kind}@${e.span.start.line}`);
     expect(kinds).toEqual([
-      "StringLiteral@2", "BuiltinCall@2", "LocalReference@3", "StringLiteral@4", "BuiltinCall@4", "LocalReference@5",
+      "NumberLiteral@2", "BuiltinCall@2", "LocalReference@3", "NumberLiteral@4", "BuiltinCall@4", "LocalReference@5",
     ]);
   });
 });
@@ -1160,7 +1171,7 @@ describe("delete", () => {
   }
 
   it("binds delete of a loaded record and needs no new dependency", () => {
-    const result = compileMynt(`scheduled {\n    let customer = load Customer("123")\n    delete customer\n}\n`);
+    const result = compileMynt(`scheduled {\n    let customer = load Customer(123)\n    delete customer\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
     if (unit.kind !== "Scheduled") throw new Error();
@@ -1173,8 +1184,8 @@ describe("delete", () => {
       "MYNT1026 Cannot delete 'c' before it has been saved: a new Customer does not exist in NetSuite until you 'save c'",
     ]);
     expect(errors(`scheduled {\n    let c = create Customer\n    save c\n    delete c\n}\n`)).toEqual([]);
-    expect(errors(`scheduled {\n    let c = copy Customer("1")\n    delete c\n}\n`)[0]).toContain("MYNT1026");
-    expect(errors(`scheduled {\n    let i = transform SalesOrder("1") to Invoice\n    save i\n    delete i\n}\n`)).toEqual([]);
+    expect(errors(`scheduled {\n    let c = copy Customer(1)\n    delete c\n}\n`)[0]).toContain("MYNT1026");
+    expect(errors(`scheduled {\n    let i = transform SalesOrder(1) to Invoice\n    save i\n    delete i\n}\n`)).toEqual([]);
   });
 
   it("MYNT1026 rejects delete when the save is only conditional", () => {
@@ -1189,51 +1200,51 @@ describe("delete", () => {
       "MYNT1025 'customer' is the Customer from beforeSubmit and cannot be deleted: it is NetSuite's record, not the script's. Only records the script loaded, created, copied, or transformed can be deleted",
     ]);
     expect(errors(`afterSubmit edit (customer: Customer) {\n    delete customer\n}\n`)[0]).toContain("from afterSubmit and cannot be deleted");
-    expect(errors(`scheduled {\n    delete load Customer("3")\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    delete load Customer(3)\n}\n`)).toEqual([
       "MYNT1025 Delete a named record: declare it first, like 'let x = load Customer(...)', then 'delete x'",
     ]);
     expect(errors(`scheduled {\n    let e = "text"\n    delete e\n}\n`)).toEqual(["MYNT1019 'e' is a string value and cannot be deleted. Only records can be deleted"]);
   });
 
   it("MYNT1028 rejects a double delete", () => {
-    expect(errors(`scheduled {\n    let b = load Customer("1")\n    delete b\n    delete b\n}\n`)).toEqual(["MYNT1028 'b' has already been deleted"]);
-    expect(errors(`scheduled {\n    let b = load Customer("1")\n    if true {\n        delete b\n    }\n    delete b\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    let b = load Customer(1)\n    delete b\n    delete b\n}\n`)).toEqual(["MYNT1028 'b' has already been deleted"]);
+    expect(errors(`scheduled {\n    let b = load Customer(1)\n    if true {\n        delete b\n    }\n    delete b\n}\n`)).toEqual([
       "MYNT1028 'b' may already have been deleted on this path",
     ]);
   });
 
   it("MYNT1027 a deleted record is consumed: no read, write, save, or other use", () => {
-    expect(errors(`scheduled {\n    let b = load Customer("1")\n    delete b\n    b.comments = "x"\n    log.debug(b.email)\n    save b\n    if b.email == "" {\n    }\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    let b = load Customer(1)\n    delete b\n    b.comments = "x"\n    log.debug(b.email)\n    save b\n    if b.email == "" {\n    }\n}\n`)).toEqual([
       "MYNT1027 Cannot assign Customer.comments because 'b' has been deleted",
       "MYNT1027 Cannot read field 'email' because 'b' has been deleted",
       "MYNT1027 Cannot save 'b' after it has been deleted",
       "MYNT1027 Cannot read field 'email' because 'b' has been deleted",
     ]);
-    const result = compileMynt(`scheduled {\n    let b = load Customer("1")\n    delete b\n    b.comments = "x"\n}\n`);
+    const result = compileMynt(`scheduled {\n    let b = load Customer(1)\n    delete b\n    b.comments = "x"\n}\n`);
     expect(result.diagnostics[0]!.span.start).toMatchObject({ line: 4, column: 5 });
     expect(result.diagnostics[0]!.span.end).toMatchObject({ line: 4, column: 6 });
     expect(result.output).toBeUndefined();
   });
 
   it("conditional deletion makes later use unsafe, while use inside the other branch stays valid", () => {
-    expect(errors(`scheduled {\n    let c = load Customer("2")\n    if c.email == "" {\n        delete c\n    } else {\n        c.comments = "kept"\n        save c\n    }\n    c.comments = "y"\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    let c = load Customer(2)\n    if c.email == "" {\n        delete c\n    } else {\n        c.comments = "kept"\n        save c\n    }\n    c.comments = "y"\n}\n`)).toEqual([
       "MYNT1027 Cannot assign Customer.comments because 'c' may already have been deleted on this path",
     ]);
-    expect(errors(`scheduled {\n    let c = load Customer("2")\n    if c.email == "" {\n        delete c\n    } else {\n        delete c\n    }\n    log.debug(c.email)\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    let c = load Customer(2)\n    if c.email == "" {\n        delete c\n    } else {\n        delete c\n    }\n    log.debug(c.email)\n}\n`)).toEqual([
       "MYNT1027 Cannot read field 'email' because 'c' has been deleted",
     ]);
-    expect(errors(`scheduled {\n    let c = load Customer("2")\n    if c.email == "" {\n        c.comments = "a"\n        save c\n    } else {\n        delete c\n    }\n}\n`)).toEqual([]);
+    expect(errors(`scheduled {\n    let c = load Customer(2)\n    if c.email == "" {\n        c.comments = "a"\n        save c\n    } else {\n        delete c\n    }\n}\n`)).toEqual([]);
   });
 
   it("deletion silences unsaved-write warnings for that record and reaches custom records", () => {
-    const result = compileMynt(`scheduled {\n    let c = load Customer("1")\n    c.comments = "x"\n    delete c\n    let entry = load MyntLog("7")\n    delete entry\n}\n`);
+    const result = compileMynt(`scheduled {\n    let c = load Customer(1)\n    c.comments = "x"\n    delete c\n    let entry = load MyntLog(7)\n    delete entry\n}\n`);
     expect(result.diagnostics).toEqual([]);
     expect(result.output).toContain('type: "customrecord_mynt_log",\n            id: entry.id');
   });
 
   it("copy and transform are new owned records of the right type", () => {
     const result = compileMynt(
-      `scheduled {\n    let dup = copy Customer("1")\n    let inv = transform SalesOrder("55") to Invoice\n    inv.memo = dup.email\n    save dup\n    save inv\n}\n`,
+      `scheduled {\n    let dup = copy Customer(1)\n    let inv = transform SalesOrder(55) to Invoice\n    inv.memo = dup.email\n    save dup\n    save inv\n}\n`,
     );
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
@@ -1251,23 +1262,23 @@ describe("delete", () => {
   });
 
   it("copy and transform warn when never saved, through the same path as create", () => {
-    const w = compileMynt(`scheduled {\n    let dup = copy Customer("1")\n    let inv = transform SalesOrder("55") to Invoice\n}\n`).diagnostics;
+    const w = compileMynt(`scheduled {\n    let dup = copy Customer(1)\n    let inv = transform SalesOrder(55) to Invoice\n}\n`).diagnostics;
     expect(w.map((d) => d.message)).toEqual([
       "'dup' is created but never saved; a new Customer does not exist in NetSuite until you 'save dup'",
       "'inv' is created but never saved; a new Invoice does not exist in NetSuite until you 'save inv'",
     ]);
-    expect(compileMynt(`scheduled {\n    let inv = transform SalesOrder("55") to Invoice\n    save inv\n}\n`).diagnostics).toEqual([]);
+    expect(compileMynt(`scheduled {\n    let inv = transform SalesOrder(55) to Invoice\n    save inv\n}\n`).diagnostics).toEqual([]);
   });
 
   it("MYNT1018 and MYNT1001 for transform's record types", () => {
-    expect(errors(`scheduled {\n    let f = transform SalesOrder("1")\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    let f = transform SalesOrder(1)\n}\n`)).toEqual([
       "MYNT1018 transform expects a target record type after the arguments, like transform SalesOrder(...) to Invoice",
     ]);
-    expect(errors(`scheduled {\n    let g = load SalesOrder("1") to Invoice\n}\n`)).toEqual(["MYNT1018 load does not take a target record type; remove 'to Invoice'"]);
-    expect(errors(`scheduled {\n    let h = transform SalesOrder("1") to Nope\n}\n`)[0]).toContain("MYNT1001 Unknown record type 'Nope'");
+    expect(errors(`scheduled {\n    let g = load SalesOrder(1) to Invoice\n}\n`)).toEqual(["MYNT1018 load does not take a target record type; remove 'to Invoice'"]);
+    expect(errors(`scheduled {\n    let h = transform SalesOrder(1) to Nope\n}\n`)[0]).toContain("MYNT1001 Unknown record type 'Nope'");
     expect(errors(`scheduled {\n    let h = transform Nope("1") to Invoice\n}\n`)[0]).toContain("MYNT1001 Unknown record type 'Nope'");
     // Compatibility is not checked: NetSuite decides at runtime.
-    expect(errors(`scheduled {\n    let odd = transform Customer("1") to MyntLog\n    save odd\n}\n`)).toEqual([]);
+    expect(errors(`scheduled {\n    let odd = transform Customer(1) to MyntLog\n    save odd\n}\n`)).toEqual([]);
   });
 });
 
@@ -1364,7 +1375,7 @@ describe("query", () => {
     ]);
     expect(errors(`scheduled {\n    for row in query Customer {\n        delete row\n    }\n}\n`)[0]).toContain("cannot be deleted: a query row is a read-only view");
     expect(errors(`scheduled {\n    for row in query Customer {\n        log.debug(row.nope)\n    }\n}\n`)).toEqual(["MYNT1004 Customer has no field 'nope'"]);
-    expect(errors(`scheduled {\n    let c = load Customer("1")\n    log.debug(c.id)\n}\n`)).toEqual(["MYNT1004 Customer has no field 'id'"]);
+    expect(errors(`scheduled {\n    let c = load Customer(1)\n    log.debug(c.id)\n}\n`)).toEqual(["MYNT1004 Customer has no field 'id'"]);
   });
 
   it("the loop variable is scoped to the body and cannot shadow", () => {
@@ -1373,7 +1384,7 @@ describe("query", () => {
       "MYNT1017 'ctx' is already declared in an enclosing scope as the entry point parameter (line 1)",
     ]);
     expect(errors(`scheduled {\n    for a in query Customer { }\n    for a in query SalesOrder { }\n}\n`)).toEqual([]);
-    expect(errors(`scheduled {\n    let c = load Customer("1")\n    for x in c { }\n    for y in "text" { }\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    let c = load Customer(1)\n    for x in c { }\n    for y in "text" { }\n}\n`)).toEqual([
       "MYNT1029 Cannot iterate over a Customer value; 'for' needs a query result, like 'for x in query Customer'",
       "MYNT1029 Cannot iterate over a string value; 'for' needs a query result, like 'for x in query Customer'",
     ]);
@@ -1393,22 +1404,22 @@ describe("lifecycle analysis across loops", () => {
   });
 
   it("write + save inside the loop on an outer record does not warn; write without save does", () => {
-    expect(diagnostics(`scheduled {\n    let customer = load Customer("1")\n    for row in query Customer {\n        customer.comments = row.email\n        save customer\n    }\n}\n`)).toEqual([]);
-    expect(diagnostics(`scheduled {\n    let customer = load Customer("1")\n    for row in query Customer {\n        customer.comments = row.email\n    }\n}\n`)).toEqual([
+    expect(diagnostics(`scheduled {\n    let customer = load Customer(1)\n    for row in query Customer {\n        customer.comments = row.email\n        save customer\n    }\n}\n`)).toEqual([]);
+    expect(diagnostics(`scheduled {\n    let customer = load Customer(1)\n    for row in query Customer {\n        customer.comments = row.email\n    }\n}\n`)).toEqual([
       "warning MYNT2001 'customer' is modified but never saved; changes to a loaded Customer are discarded unless you 'save customer'",
     ]);
   });
 
   it("conditional delete inside a loop leaves the record possibly deleted after it, and on the next iteration", () => {
-    expect(diagnostics(`scheduled {\n    let customer = load Customer("1")\n    for row in query MyntLog {\n        if row.custrecord_mynt_done {\n            delete customer\n        }\n    }\n    customer.comments = "x"\n}\n`)).toEqual([
+    expect(diagnostics(`scheduled {\n    let customer = load Customer(1)\n    for row in query MyntLog {\n        if row.custrecord_mynt_done {\n            delete customer\n        }\n    }\n    customer.comments = "x"\n}\n`)).toEqual([
       "error MYNT1028 'customer' may already have been deleted on this path",
       "error MYNT1027 Cannot assign Customer.comments because 'customer' may already have been deleted on this path",
     ]);
-    expect(diagnostics(`scheduled {\n    let customer = load Customer("1")\n    for row in query MyntLog {\n        log.debug(row.name)\n    }\n    delete customer\n}\n`)).toEqual([]);
+    expect(diagnostics(`scheduled {\n    let customer = load Customer(1)\n    for row in query MyntLog {\n        log.debug(row.name)\n    }\n    delete customer\n}\n`)).toEqual([]);
   });
 
   it("a save inside the loop does not count as covering a write before the loop", () => {
-    expect(diagnostics(`scheduled {\n    let customer = load Customer("1")\n    customer.comments = "x"\n    for row in query MyntLog {\n        save customer\n    }\n}\n`)).toEqual([
+    expect(diagnostics(`scheduled {\n    let customer = load Customer(1)\n    customer.comments = "x"\n    for row in query MyntLog {\n        save customer\n    }\n}\n`)).toEqual([
       "warning MYNT2001 'customer' may leave this script with unsaved changes: it is modified here, but not every execution path that follows performs 'save customer'",
     ]);
   });
@@ -1431,7 +1442,7 @@ describe("sublists", () => {
   });
 
   it("binds order.item as a Sublist and the loop variable as a Line with reads and writes through the parent", () => {
-    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        log.debug(line.description)\n        line.quantity = 2\n    }\n    save order\n}\n`);
+    const result = compileMynt(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        log.debug(line.description)\n        line.quantity = 2\n    }\n    save order\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
     if (unit.kind !== "Scheduled") throw new Error();
@@ -1447,34 +1458,34 @@ describe("sublists", () => {
   });
 
   it("rejects unknown sublists and line fields with did-you-mean, read-only and mistyped writes", () => {
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.itme { }\n}\n`)).toEqual(["MYNT1004 SalesOrder has no field or sublist 'itme'. Did you mean 'item'?"]);
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        log.debug(line.quantty)\n    }\n}\n`)).toEqual(["MYNT1004 SalesOrder.item has no field 'quantty'. Did you mean 'quantity'?"]);
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        line.amount = 1\n    }\n    save order\n}\n`)).toEqual(["MYNT1005 SalesOrder.item.amount is read-only and cannot be assigned"]);
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        line.quantity = "x"\n    }\n    save order\n}\n`)).toEqual(["MYNT1006 Cannot assign string to SalesOrder.item.quantity, which is number"]);
-    expect(errors(`scheduled {\n    let c = load Customer("1")\n    for line in c.item { }\n}\n`)).toEqual(["MYNT1004 Customer has no field 'item'"]);
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.itme { }\n}\n`)).toEqual(["MYNT1004 SalesOrder has no field or sublist 'itme'. Did you mean 'item'?"]);
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        log.debug(line.quantty)\n    }\n}\n`)).toEqual(["MYNT1004 SalesOrder.item has no field 'quantty'. Did you mean 'quantity'?"]);
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        line.amount = 1\n    }\n    save order\n}\n`)).toEqual(["MYNT1005 SalesOrder.item.amount is read-only and cannot be assigned"]);
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        line.quantity = "x"\n    }\n    save order\n}\n`)).toEqual(["MYNT1006 Cannot assign string to SalesOrder.item.quantity, which is number"]);
+    expect(errors(`scheduled {\n    let c = load Customer(1)\n    for line in c.item { }\n}\n`)).toEqual(["MYNT1004 Customer has no field 'item'"]);
   });
 
   it("query rows have no sublists, and a sublist is not a value", () => {
     expect(errors(`scheduled {\n    for row in query SalesOrder {\n        for line in row.item { }\n    }\n}\n`)).toEqual([
       "MYNT1034 Sublist 'item' is available only on a loaded or context SalesOrder; a query row has no lines. Load the record first: 'let x = load SalesOrder(row.id)', then 'for line in x.item'",
     ]);
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    let x = order.item\n}\n`)).toEqual(["MYNT1006 A sublist cannot be stored in a local; iterate it where it is: 'for line in order.item'"]);
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    log.debug(order.item.quantity)\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    let x = order.item\n}\n`)).toEqual(["MYNT1006 A sublist cannot be stored in a local; iterate it where it is: 'for line in order.item'"]);
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    log.debug(order.item.quantity)\n}\n`)).toEqual([
       "MYNT1011 Cannot access '.quantity' on a sublist; iterate its lines: 'for line in order.item', then use 'line.quantity'",
     ]);
-    expect(errors(`scheduled {\n    for line in load SalesOrder("2").item { }\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    for line in load SalesOrder(2).item { }\n}\n`)).toEqual([
       "MYNT1029 Iterate the sublist of a named record: declare it first, like 'let x = load SalesOrder(...)', then 'for line in x.item'",
     ]);
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order { }\n}\n`)[0]).toContain("'for' needs a sublist of it, like 'for line in order.item'");
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order { }\n}\n`)[0]).toContain("'for' needs a sublist of it, like 'for line in order.item'");
   });
 
   it("a line cannot be saved or deleted, and cannot be passed as a value", () => {
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        save line\n    }\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        save line\n    }\n}\n`)).toEqual([
       "MYNT1033 A sublist line cannot be saved independently: 'line' is a line of SalesOrder.item, persisted with its parent. Save the parent SalesOrder instead",
     ]);
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        delete line\n    }\n}\n`)[0]).toContain("MYNT1033 A sublist line cannot be deleted independently");
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        log.debug(line)\n    }\n}\n`)).toEqual(["MYNT1014 log.debug argument 1 must be string, but received Line<SalesOrder.item>"]);
-    expect(errors(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item { }\n    log.debug(line.description)\n}\n`)[0]).toContain("MYNT1010 Unknown identifier 'line'");
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        delete line\n    }\n}\n`)[0]).toContain("MYNT1033 A sublist line cannot be deleted independently");
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        log.debug(line)\n    }\n}\n`)).toEqual(["MYNT1014 log.debug argument 1 must be string, but received Line<SalesOrder.item>"]);
+    expect(errors(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item { }\n    log.debug(line.description)\n}\n`)[0]).toContain("MYNT1010 Unknown identifier 'line'");
   });
 
   it("context records govern line writes by hook, and copy or transform results have sublists", () => {
@@ -1483,8 +1494,8 @@ describe("sublists", () => {
       "MYNT1007 Cannot assign SalesOrder.item.quantity in afterSubmit: the SalesOrder is already saved and the change would be silently discarded. Use beforeSubmit instead.",
     ]);
     expect(errors(`afterSubmit edit (order: SalesOrder) {\n    for line in order.item {\n        log.debug(line.description)\n    }\n}\n`)).toEqual([]);
-    expect(compileMynt(`scheduled {\n    let inv = transform SalesOrder("1") to Invoice\n    for line in inv.item {\n        line.description = "x"\n    }\n    save inv\n}\n`).diagnostics).toEqual([]);
-    expect(compileMynt(`scheduled {\n    let dup = copy SalesOrder("1")\n    for line in dup.item {\n        line.rate = 5\n    }\n    save dup\n}\n`).diagnostics).toEqual([]);
+    expect(compileMynt(`scheduled {\n    let inv = transform SalesOrder(1) to Invoice\n    for line in inv.item {\n        line.description = "x"\n    }\n    save inv\n}\n`).diagnostics).toEqual([]);
+    expect(compileMynt(`scheduled {\n    let dup = copy SalesOrder(1)\n    for line in dup.item {\n        line.rate = 5\n    }\n    save dup\n}\n`).diagnostics).toEqual([]);
     expect(compileMynt(`scheduled {\n    let fresh = create SalesOrder\n    for line in fresh.item {\n        line.rate = 5\n    }\n    save fresh\n}\n`).diagnostics).toEqual([]);
   });
 });
@@ -1495,27 +1506,27 @@ describe("lifecycle analysis with sublists", () => {
   }
 
   it("a line write is a pending write on the parent, cleared by saving the parent", () => {
-    expect(diagnostics(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        line.quantity = 2\n    }\n}\n`)).toEqual([
+    expect(diagnostics(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        line.quantity = 2\n    }\n}\n`)).toEqual([
       "warning MYNT2001 'order' is modified but never saved; changes to a loaded SalesOrder are discarded unless you 'save order'",
     ]);
-    expect(diagnostics(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        line.quantity = 2\n    }\n    save order\n}\n`)).toEqual([]);
-    expect(diagnostics(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        if line.quantity < 1 {\n            line.quantity = 1\n        }\n    }\n    save order\n}\n`)).toEqual([]);
+    expect(diagnostics(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        line.quantity = 2\n    }\n    save order\n}\n`)).toEqual([]);
+    expect(diagnostics(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        if line.quantity < 1 {\n            line.quantity = 1\n        }\n    }\n    save order\n}\n`)).toEqual([]);
   });
 
   it("a line write after the parent's last save warns, and a conditional save inside the loop is conservative", () => {
-    expect(diagnostics(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        line.quantity = 2\n    }\n    save order\n    for line in order.item {\n        line.quantity = 3\n    }\n}\n`)).toEqual([
+    expect(diagnostics(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        line.quantity = 2\n    }\n    save order\n    for line in order.item {\n        line.quantity = 3\n    }\n}\n`)).toEqual([
       "warning MYNT2001 'order' is modified after its last save; this change to the loaded SalesOrder is discarded unless you 'save order' again",
     ]);
-    expect(diagnostics(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        line.quantity = 1\n        if line.rate > 10 {\n            save order\n        }\n    }\n}\n`)).toEqual([
+    expect(diagnostics(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        line.quantity = 1\n        if line.rate > 10 {\n            save order\n        }\n    }\n}\n`)).toEqual([
       "warning MYNT2001 'order' may leave this script with unsaved changes: it is modified here, but not every execution path that follows performs 'save order'",
     ]);
   });
 
   it("a deleted parent makes its sublist and lines unusable", () => {
-    expect(diagnostics(`scheduled {\n    let order = load SalesOrder("1")\n    delete order\n    for line in order.item { }\n}\n`)).toEqual([
+    expect(diagnostics(`scheduled {\n    let order = load SalesOrder(1)\n    delete order\n    for line in order.item { }\n}\n`)).toEqual([
       "error MYNT1027 Cannot access sublist 'item' because 'order' has been deleted",
     ]);
-    expect(diagnostics(`scheduled {\n    let order = load SalesOrder("1")\n    for line in order.item {\n        delete order\n        line.quantity = 1\n    }\n}\n`)).toEqual([
+    expect(diagnostics(`scheduled {\n    let order = load SalesOrder(1)\n    for line in order.item {\n        delete order\n        line.quantity = 1\n    }\n}\n`)).toEqual([
       "error MYNT1028 'order' may already have been deleted on this path",
       "error MYNT1027 Cannot assign SalesOrder.item.quantity because 'order' has been deleted",
     ]);
@@ -1533,7 +1544,7 @@ describe("add and remove lines", () => {
   function errors(source: string) {
     return compileMynt(source).diagnostics.filter((d) => d.severity === "error").map((d) => `${d.code} ${d.message}`);
   }
-  const ORDER = `scheduled {\n    let order = load SalesOrder("1")\n`;
+  const ORDER = `scheduled {\n    let order = load SalesOrder(1)\n`;
 
   it("binds remove to the line's binding and add to initializers on the parent", () => {
     const result = compileMynt(`${ORDER}    for line in order.item {\n        if line.quantity == 0 {\n            remove line\n        }\n    }\n    add order.item {\n        item = "100"\n        quantity = 2\n    }\n    save order\n}\n`);
@@ -1565,7 +1576,7 @@ describe("add and remove lines", () => {
       "MYNT1011 Cannot add a line to a SalesOrder value; 'add' needs a sublist, like 'add order.item { ... }'. Name a sublist, like 'add order.item {'",
     ]);
     expect(errors(`${ORDER}    add order.itme { quantity = 1 }\n}\n`)).toEqual(["MYNT1004 SalesOrder has no field or sublist 'itme'. Did you mean 'item'?"]);
-    expect(errors(`scheduled {\n    add load SalesOrder("3").item { quantity = 1 }\n}\n`)).toEqual([
+    expect(errors(`scheduled {\n    add load SalesOrder(3).item { quantity = 1 }\n}\n`)).toEqual([
       "MYNT1029 Add lines to the sublist of a named record: declare it first, like 'let x = load SalesOrder(...)', then 'add x.item {'",
     ]);
     expect(errors(`scheduled {\n    for row in query SalesOrder {\n        add row.item { quantity = 1 }\n    }\n}\n`)[0]).toContain("MYNT1034");
@@ -1600,15 +1611,15 @@ describe("add and remove lines", () => {
 
   it("create, copy, and transform results accept add and remove with no special handling", () => {
     expect(compileMynt(`scheduled {\n    let order = create SalesOrder\n    add order.item {\n        item = "123"\n        quantity = 2\n    }\n    save order\n}\n`).diagnostics).toEqual([]);
-    expect(compileMynt(`scheduled {\n    let order = copy SalesOrder("123")\n    add order.item {\n        item = "456"\n    }\n    save order\n}\n`).diagnostics).toEqual([]);
-    expect(compileMynt(`scheduled {\n    let invoice = transform SalesOrder("123") to Invoice\n    for line in invoice.item {\n        if line.quantity == 0 {\n            remove line\n        }\n    }\n    save invoice\n}\n`).diagnostics).toEqual([]);
+    expect(compileMynt(`scheduled {\n    let order = copy SalesOrder(123)\n    add order.item {\n        item = "456"\n    }\n    save order\n}\n`).diagnostics).toEqual([]);
+    expect(compileMynt(`scheduled {\n    let invoice = transform SalesOrder(123) to Invoice\n    for line in invoice.item {\n        if line.quantity == 0 {\n            remove line\n        }\n    }\n    save invoice\n}\n`).diagnostics).toEqual([]);
   });
 
   it("MYNT1038 refuses adding to a sublist while iterating it, but not another sublist or record", () => {
     expect(errors(`${ORDER}    for line in order.item {\n        add order.item { quantity = 1 }\n    }\n    save order\n}\n`)).toEqual([
       "MYNT1038 Cannot add a line to SalesOrder.item while iterating it; add lines after the loop",
     ]);
-    expect(errors(`${ORDER}    let other = load SalesOrder("2")\n    for line in order.item {\n        add other.item { quantity = line.quantity }\n    }\n    save order\n    save other\n}\n`)).toEqual([]);
+    expect(errors(`${ORDER}    let other = load SalesOrder(2)\n    for line in order.item {\n        add other.item { quantity = line.quantity }\n    }\n    save order\n    save other\n}\n`)).toEqual([]);
   });
 });
 
@@ -1616,7 +1627,7 @@ describe("lifecycle analysis with add and remove", () => {
   function diagnostics(source: string) {
     return compileMynt(source).diagnostics.map((d) => `${d.severity} ${d.code} ${d.message}`);
   }
-  const ORDER = `scheduled {\n    let order = load SalesOrder("1")\n`;
+  const ORDER = `scheduled {\n    let order = load SalesOrder(1)\n`;
 
   it("remove and add are mutations of the parent, cleared by saving it", () => {
     expect(diagnostics(`${ORDER}    for line in order.item {\n        remove line\n    }\n}\n`)).toEqual([
@@ -1661,7 +1672,7 @@ describe("functions", () => {
   }
 
   it("binds functions, parameters with origin parameter, calls before declaration, and returns", () => {
-    const result = compileMynt(`scheduled {\n    let order = load SalesOrder("1")\n    setMemo(order, "x")\n    if isEmpty(order.memo) {\n        save order\n    }\n    save order\n}\nfn setMemo(order: SalesOrder, memo: string) {\n    order.memo = memo\n}\nfn isEmpty(text: string): boolean {\n    return text == ""\n}\n`);
+    const result = compileMynt(`scheduled {\n    let order = load SalesOrder(1)\n    setMemo(order, "x")\n    if isEmpty(order.memo) {\n        save order\n    }\n    save order\n}\nfn setMemo(order: SalesOrder, memo: string) {\n    order.memo = memo\n}\nfn isEmpty(text: string): boolean {\n    return text == ""\n}\n`);
     expect(result.diagnostics).toEqual([]);
     const unit = result.unit!;
     expect(unit.functions.map((f) => `${f.name}:${f.returnType}`)).toEqual(["setMemo:Void", "isEmpty:Bool"]);
@@ -1699,7 +1710,7 @@ describe("functions", () => {
     expect(errors(`fn f(): number {\n    return\n}\nscheduled { }\n`)[0]).toBe("MYNT1041 'f' must return a number value");
     expect(errors(`fn f() {\n    return 1\n}\nscheduled { }\n`)).toEqual(["MYNT1041 'f' returns no value; remove the value or declare ': number'"]);
     expect(errors(`scheduled {\n    return 1\n}\n`)).toEqual(["MYNT1041 execute returns no value"]);
-    expect(errors(`scheduled {\n    let c = load Customer("1")\n    if c.email == "" {\n        return\n    }\n    log.debug(c.email)\n}\n`)).toEqual([]);
+    expect(errors(`scheduled {\n    let c = load Customer(1)\n    if c.email == "" {\n        return\n    }\n    log.debug(c.email)\n}\n`)).toEqual([]);
   });
 
   it("checks calls: unknown, count, types, void as value, type arguments, members, and did-you-mean", () => {
@@ -1707,7 +1718,7 @@ describe("functions", () => {
     expect(errors(`${PRE}scheduled {\n    cont(1)\n}\n`)[0]).toContain("MYNT1010 Unknown identifier 'cont'. Did you mean 'count'?");
     expect(errors(`${PRE}scheduled {\n    count(1, 2)\n}\n`)).toEqual(["MYNT1013 'count' expects 1 argument (x: number), but received 2"]);
     expect(errors(`${PRE}scheduled {\n    count("a")\n}\n`)).toEqual(["MYNT1014 'count' parameter 'x' must be number, but received string"]);
-    expect(errors(`${PRE}scheduled {\n    let c = load Customer("1")\n    let v = note(c)\n}\n`)).toEqual(["MYNT1006 Cannot initialize 'v' with this expression, which returns Void"]);
+    expect(errors(`${PRE}scheduled {\n    let c = load Customer(1)\n    let v = note(c)\n}\n`)).toEqual(["MYNT1006 Cannot initialize 'v' with this expression, which returns Void"]);
     expect(errors(`${PRE}scheduled {\n    if count(1) { }\n}\n`)[0]).toContain("MYNT1021 if condition must be boolean, but received number");
     expect(errors(`${PRE}scheduled {\n    count Customer(1)\n}\n`)).toEqual(["MYNT1018 'count' does not take a record type; write count(...)"]);
     expect(errors(`${PRE}scheduled {\n    count.x\n}\n`)).toEqual(["MYNT1011 'count' is a function and has no member 'x'"]);
@@ -1720,8 +1731,8 @@ describe("functions", () => {
     expect(errors(`${PRE}scheduled {\n    for row in query Customer {\n        note(row)\n    }\n}\n`)).toEqual([
       "MYNT1044 A query row cannot be passed to 'note' as a Customer: a row is a read-only view, not a record. Load it first: 'let x = load Customer(row.id)'",
     ]);
-    expect(errors(`${PRE}scheduled {\n    note(load Customer("1"))\n}\n`)).toEqual(["MYNT1044 Pass a named record to 'note': declare it first, like 'let x = load Customer(...)', then 'note(x)'"]);
-    expect(errors(`${PRE}scheduled {\n    let o = load SalesOrder("1")\n    note(o)\n}\n`)).toEqual(["MYNT1014 'note' parameter 'c' must be Customer, but received SalesOrder"]);
+    expect(errors(`${PRE}scheduled {\n    note(load Customer(1))\n}\n`)).toEqual(["MYNT1044 Pass a named record to 'note': declare it first, like 'let x = load Customer(...)', then 'note(x)'"]);
+    expect(errors(`${PRE}scheduled {\n    let o = load SalesOrder(1)\n    note(o)\n}\n`)).toEqual(["MYNT1014 'note' parameter 'c' must be Customer, but received SalesOrder"]);
   });
 });
 
@@ -1735,11 +1746,11 @@ describe("lifecycle analysis across calls", () => {
   const MAYBE = `fn maybeSave(order: SalesOrder, flag: boolean) {\n    order.memo = "y"\n    if flag {\n        save order\n    }\n}\n`;
 
   it("a function that modifies its parameter leaves the caller's record pending until the caller saves", () => {
-    expect(diagnostics(`${SET}scheduled {\n    let order = load SalesOrder("1")\n    setMemo(order)\n}\n`)).toEqual([
+    expect(diagnostics(`${SET}scheduled {\n    let order = load SalesOrder(1)\n    setMemo(order)\n}\n`)).toEqual([
       "warning MYNT2001 'order' is modified by 'setMemo' but never saved; changes to a loaded SalesOrder are discarded unless you 'save order'",
     ]);
-    expect(diagnostics(`${SET}scheduled {\n    let order = load SalesOrder("1")\n    setMemo(order)\n    save order\n}\n`)).toEqual([]);
-    expect(diagnostics(`${SET}scheduled {\n    let order = load SalesOrder("1")\n    save order\n    setMemo(order)\n}\n`)).toEqual([
+    expect(diagnostics(`${SET}scheduled {\n    let order = load SalesOrder(1)\n    setMemo(order)\n    save order\n}\n`)).toEqual([]);
+    expect(diagnostics(`${SET}scheduled {\n    let order = load SalesOrder(1)\n    save order\n    setMemo(order)\n}\n`)).toEqual([
       "warning MYNT2001 'order' is modified by 'setMemo' after its last save; this change to the loaded SalesOrder is discarded unless you 'save order' again",
     ]);
     // Inside the function, the parameter's pending change is not reported: it is the caller's.
@@ -1747,9 +1758,9 @@ describe("lifecycle analysis across calls", () => {
   });
 
   it("a function that saves clears the caller's pending state, and one that may save only sometimes does not", () => {
-    expect(diagnostics(`${PERSIST}scheduled {\n    let order = load SalesOrder("1")\n    order.memo = "before"\n    persist(order)\n}\n`)).toEqual([]);
+    expect(diagnostics(`${PERSIST}scheduled {\n    let order = load SalesOrder(1)\n    order.memo = "before"\n    persist(order)\n}\n`)).toEqual([]);
     expect(diagnostics(`${PERSIST}scheduled {\n    let order = create SalesOrder\n    persist(order)\n}\n`)).toEqual([]);
-    expect(diagnostics(`${MAYBE}scheduled {\n    let order = load SalesOrder("1")\n    maybeSave(order, true)\n}\n`)).toEqual([
+    expect(diagnostics(`${MAYBE}scheduled {\n    let order = load SalesOrder(1)\n    maybeSave(order, true)\n}\n`)).toEqual([
       "warning MYNT2001 'order' may leave this script with unsaved changes: it is modified by 'maybeSave' here, but not every execution path that follows performs 'save order'",
     ]);
     expect(diagnostics(`${MAYBE}scheduled {\n    let order = create SalesOrder\n    maybeSave(order, true)\n}\n`)).toEqual([
@@ -1758,7 +1769,7 @@ describe("lifecycle analysis across calls", () => {
   });
 
   it("a function that deletes consumes the caller's record and needs it persisted first", () => {
-    expect(diagnostics(`${DROP}scheduled {\n    let order = load SalesOrder("1")\n    drop(order)\n    log.debug(order.memo)\n    drop(order)\n}\n`)).toEqual([
+    expect(diagnostics(`${DROP}scheduled {\n    let order = load SalesOrder(1)\n    drop(order)\n    log.debug(order.memo)\n    drop(order)\n}\n`)).toEqual([
       "error MYNT1027 Cannot read field 'memo' because 'order' has been deleted",
       "error MYNT1027 'order' has been deleted and cannot be used",
     ]);
@@ -1766,7 +1777,7 @@ describe("lifecycle analysis across calls", () => {
       "error MYNT1026 Cannot pass 'order' to 'drop', which deletes it, before it has been saved: a new SalesOrder does not exist in NetSuite until you 'save order'",
       "warning MYNT2001 'order' is created but never saved; a new SalesOrder does not exist in NetSuite until you 'save order'",
     ]);
-    expect(diagnostics(`${DROP}scheduled {\n    let order = load SalesOrder("1")\n    if order.memo == "" {\n        drop(order)\n    }\n    order.memo = "x"\n}\n`)).toEqual([
+    expect(diagnostics(`${DROP}scheduled {\n    let order = load SalesOrder(1)\n    if order.memo == "" {\n        drop(order)\n    }\n    order.memo = "x"\n}\n`)).toEqual([
       "error MYNT1027 Cannot assign SalesOrder.memo because 'order' may already have been deleted on this path",
     ]);
   });
@@ -1784,7 +1795,7 @@ describe("lifecycle analysis across calls", () => {
   });
 
   it("summaries compose through nested calls, functions keep their own local rules, and recursion is refused", () => {
-    expect(diagnostics(`${SET}fn twice(order: SalesOrder) {\n    setMemo(order)\n    setMemo(order)\n}\nscheduled {\n    let order = load SalesOrder("1")\n    twice(order)\n}\n`)).toEqual([
+    expect(diagnostics(`${SET}fn twice(order: SalesOrder) {\n    setMemo(order)\n    setMemo(order)\n}\nscheduled {\n    let order = load SalesOrder(1)\n    twice(order)\n}\n`)).toEqual([
       "warning MYNT2001 'order' is modified by 'twice' but never saved; changes to a loaded SalesOrder are discarded unless you 'save order'",
     ]);
     expect(diagnostics(`fn leak() {\n    let c = create Customer\n    c.email = "x"\n}\nscheduled {\n    leak()\n}\n`)).toEqual([
@@ -1795,8 +1806,8 @@ describe("lifecycle analysis across calls", () => {
   });
 
   it("returns end a path: state after an early return is not merged into the fall-through", () => {
-    expect(diagnostics(`fn finish(order: SalesOrder, flag: boolean) {\n    if flag {\n        save order\n        return\n    }\n    order.memo = "x"\n    save order\n}\nscheduled {\n    let order = load SalesOrder("1")\n    order.memo = "a"\n    finish(order, true)\n}\n`)).toEqual([]);
-    expect(diagnostics(`scheduled {\n    let c = load Customer("1")\n    c.comments = "x"\n    if c.email == "" {\n        save c\n        return\n    }\n    log.debug(c.email)\n}\n`)).toEqual([
+    expect(diagnostics(`fn finish(order: SalesOrder, flag: boolean) {\n    if flag {\n        save order\n        return\n    }\n    order.memo = "x"\n    save order\n}\nscheduled {\n    let order = load SalesOrder(1)\n    order.memo = "a"\n    finish(order, true)\n}\n`)).toEqual([]);
+    expect(diagnostics(`scheduled {\n    let c = load Customer(1)\n    c.comments = "x"\n    if c.email == "" {\n        save c\n        return\n    }\n    log.debug(c.email)\n}\n`)).toEqual([
       "warning MYNT2001 'c' may leave this script with unsaved changes: it is modified here, but not every execution path that follows performs 'save c'",
     ]);
   });

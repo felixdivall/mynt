@@ -1,0 +1,211 @@
+================================================================================
+summary search: group by, aggregates, and alias ordering in any clause order
+================================================================================
+
+scheduled {
+    let totals = search SalesOrder
+        where mainline === true
+        group by entity
+        select entity, total = sum(amount)
+        order by total desc
+    let b = search SalesOrder
+        order by total desc
+        select entity, n = count(), total = sum(amount)
+        group by entity, subsidiary
+        limit 10
+    let c = search SalesOrder
+        select total = sum(amount)
+        first
+        or return
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    (block
+      (let_statement
+        (identifier)
+        (query_expression
+          (call_expression
+            (identifier)
+            (type_identifier))
+          (where_clause
+            (binary_expression
+              (identifier)
+              (boolean)))
+          (group_clause
+            (identifier))
+          (select_clause
+            (identifier)
+            (aggregate_item
+              (identifier)
+              (aggregate_call
+                (aggregate_function)
+                (identifier))))
+          (order_clause
+            (sort_key
+              (identifier)))))
+      (let_statement
+        (identifier)
+        (query_expression
+          (call_expression
+            (identifier)
+            (type_identifier))
+          (order_clause
+            (sort_key
+              (identifier)))
+          (select_clause
+            (identifier)
+            (aggregate_item
+              (identifier)
+              (aggregate_call
+                (aggregate_function)))
+            (aggregate_item
+              (identifier)
+              (aggregate_call
+                (aggregate_function)
+                (identifier))))
+          (group_clause
+            (identifier)
+            (identifier))
+          (limit_clause
+            (number))))
+      (let_statement
+        (identifier)
+        (or_expression
+          (query_expression
+            (call_expression
+              (identifier)
+              (type_identifier))
+            (select_clause
+              (aggregate_item
+                (identifier)
+                (aggregate_call
+                  (aggregate_function)
+                  (identifier))))
+            (first_clause))
+          (return_statement))))))
+
+================================================================================
+grouped joined fields and aggregates over joins
+================================================================================
+
+scheduled {
+    let d = search SalesOrder
+        group by entity.email
+        select entity.email, total = sum(amount), m = max(entity.email)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    (block
+      (let_statement
+        (identifier)
+        (query_expression
+          (call_expression
+            (identifier)
+            (type_identifier))
+          (group_clause
+            (member_expression
+              (identifier)
+              (identifier)))
+          (select_clause
+            (member_expression
+              (identifier)
+              (identifier))
+            (aggregate_item
+              (identifier)
+              (aggregate_call
+                (aggregate_function)
+                (identifier)))
+            (aggregate_item
+              (identifier)
+              (aggregate_call
+                (aggregate_function)
+                (member_expression
+                  (identifier)
+                  (identifier))))))))))
+
+================================================================================
+aggregate names and group are identifiers elsewhere
+================================================================================
+
+scheduled {
+    let sum = 1
+    let group = sum
+    let e = search SalesOrder select sum, group
+    let count = search SalesOrder select count
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    (block
+      (let_statement
+        (identifier)
+        (number))
+      (let_statement
+        (identifier)
+        (identifier))
+      (let_statement
+        (identifier)
+        (query_expression
+          (call_expression
+            (identifier)
+            (type_identifier))
+          (select_clause
+            (identifier)
+            (identifier))))
+      (let_statement
+        (identifier)
+        (query_expression
+          (call_expression
+            (identifier)
+            (type_identifier))
+          (select_clause
+            (identifier)))))))
+
+================================================================================
+cut-off group by and aggregate keep the next statement
+================================================================================
+
+scheduled {
+    let f = search SalesOrder
+        group by
+    let h = search SalesOrder
+        select total =
+    log.debug("next")
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (group_clause)))
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (select_clause
+            field: (identifier))))
+      (ERROR)
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (string)))))))

@@ -9,7 +9,7 @@ import type { Span } from "../diagnostics.js";
 import type { FieldSchema, FieldType, RecordSchema, SublistSchema } from "../schema/types.js";
 import type { Builtin, NetSuiteModule } from "./builtins.js";
 import type { SearchPredicate } from "./search.js";
-import type { MyntType, ProjectionType, ReferenceType, SequenceType, SublistType } from "./types.js";
+import type { AggregateKind, MyntType, OptionalType, ProjectionType, RecordType, ReferenceType, ResultField, SequenceType, SublistType, SummaryType } from "./types.js";
 import type { QueryOperation } from "../parser/ast.js";
 
 export type ScriptUnit = UserEventUnit | ScheduledUnit;
@@ -87,7 +87,7 @@ export interface ScopedLocal {
 export interface LocalSymbol {
   name: string;
   type: MyntType;
-  origin: "parameter" | "let" | "loop";
+  origin: "parameter" | "let" | "loop" | "catch";
   declaredAt: Span;
 }
 
@@ -110,6 +110,7 @@ export interface BoundScheduledEntryPoint {
 }
 
 export type BoundStatement =
+  | TryCatch
   | LocalDeclaration
   | FieldWrite
   | SaveRecord
@@ -243,6 +244,22 @@ export interface BoundIf {
   span: Span;
 }
 
+/**
+ * `try { } catch err { } finally { }`: JavaScript's own construct. The
+ * handler runs when the body throws, bound to a local of type Error (or
+ * none); the finalizer runs either way. Absence of an optional value is
+ * not a throw and never reaches the handler.
+ */
+export interface TryCatch {
+  kind: "TryCatch";
+  body: BoundStatement[];
+  /** The caught error local, when written. */
+  binding: LocalSymbol | undefined;
+  handler: BoundStatement[] | undefined;
+  finalizer: BoundStatement[] | undefined;
+  span: Span;
+}
+
 export interface LocalDeclaration {
   kind: "LocalDeclaration";
   local: LocalSymbol;
@@ -281,16 +298,25 @@ export interface BoundExpressionStatement {
 }
 
 export type BoundExpression =
+  | OptionalResolve
+  | OptionalPresence
+  | ErrorPropertyRead
+  | ResultFieldRead
+  | SelectedAggregate
+  | AliasReference
   | BoundStringLiteral
   | BoundNumberLiteral
   | BoundBoolLiteral
   | LocalReference
   | FieldRead
+  | JoinedFieldRead
   | SublistAccess
   | RecordIdRead
+  | ReferenceTextRead
   | RecordReference
   | Lookup
   | QueryField
+  | JoinedQueryField
   | Query
   | BuiltinCall
   | FunctionCall
@@ -313,6 +339,39 @@ export interface SublistAccess {
 }
 
 /**
+ * `value or return` / `value or { ... }`: an optional resolved where it
+ * arises. `value` is evaluated once; if absent, `absence` runs, and since
+ * it leaves the current control flow (the binder proves every path ends
+ * in `return`), the expression's type is the inner, non-optional type.
+ * Allowed as a `let` initializer, where the emitter can hoist the test.
+ */
+export interface OptionalResolve {
+  kind: "OptionalResolve";
+  value: BoundExpression;
+  absence: BoundStatement[];
+  type: RecordType | SummaryType;
+  span: Span;
+}
+
+/** `if account { ... }` on an optional local: a presence test, not truthiness; the local is narrowed inside the branch. */
+export interface OptionalPresence {
+  kind: "OptionalPresence";
+  reference: LocalReference;
+  type: "Bool";
+  span: Span;
+}
+
+/** `err.name` / `err.message` on a caught Error. */
+export interface ErrorPropertyRead {
+  kind: "ErrorPropertyRead";
+  receiver: BoundExpression;
+  property: "name" | "message";
+  nameSpan: Span;
+  type: "Text";
+  span: Span;
+}
+
+/**
  * `customer.id` on a query or search row, or on a record reference: the
  * record's internal id, a language property rather than a schema field.
  * Always a string, whatever the reference was constructed from.
@@ -326,10 +385,23 @@ export interface RecordIdRead {
 }
 
 /**
+ * `ref.text` on a display reference: the display text the backend supplied
+ * with the id. Only a reference whose type says it carries text has this;
+ * on an identity reference the binder reports it instead of fetching.
+ */
+export interface ReferenceTextRead {
+  kind: "ReferenceTextRead";
+  receiver: BoundExpression;
+  nameSpan: Span;
+  type: "Text";
+  span: Span;
+}
+
+/**
  * `Customer(123)` / `Customer("123")`: a typed reference to one record. The
- * id is a string or number expression; the value performs no NetSuite work.
- * At runtime the reference is the id itself, which is what every N/search
- * and N/record call that takes an id accepts.
+ * id is a number or string expression; the value performs no NetSuite work.
+ * At runtime the reference is the id itself, as written, which every
+ * N/search and N/record call that takes an id expects.
  */
 export interface RecordReference {
   kind: "RecordReference";
@@ -351,10 +423,11 @@ export interface RecordReference {
  */
 export type LookupSource = "lookupFields" | "record" | "row";
 
-/** One projected field, where it is written. */
+/** One projected field, where it is written, and the type its value has from this lookup's source. */
 export interface LookupField {
   kind: "LookupField";
   field: FieldSchema;
+  type: MyntType;
   span: Span;
 }
 
@@ -369,16 +442,55 @@ export interface Lookup {
   record: RecordSchema;
   fields: LookupField[];
   source: LookupSource;
-  type: FieldType | ProjectionType;
+  /** One field: that field's value type. Several: the projection. */
+  type: MyntType;
   span: Span;
 }
 
-/** A bare field name inside a query condition: `email` in `query Customer where email != ""`. */
+/**
+ * One join hop: the select field the relationship goes through, and the
+ * record type it reaches, both from the schema (`refTarget`, `selection:
+ * single`). Predicates and planned columns share this, so a joined filter
+ * and a joined column describe the relationship the same way.
+ */
+export interface JoinStep {
+  via: FieldSchema;
+  target: RecordSchema;
+}
+
+/**
+ * `order.entity.email` on a search row: a field of the record the row's
+ * select field refers to, fetched by the same search through a joined
+ * column the planner adds. No record is loaded and nothing is looked up;
+ * the receiver is the row's reference field read.
+ */
+export interface JoinedFieldRead {
+  kind: "JoinedFieldRead";
+  receiver: FieldRead;
+  join: JoinStep;
+  field: FieldSchema;
+  fieldSpan: Span;
+  type: MyntType;
+  span: Span;
+}
+
+/** `entity.email` inside `search SalesOrder where ...`: a field of the referenced record, filtered through the join. */
+export interface JoinedQueryField {
+  kind: "JoinedQueryField";
+  base: QueryField;
+  join: JoinStep;
+  field: FieldSchema;
+  fieldSpan: Span;
+  type: MyntType;
+  span: Span;
+}
+
+/** A bare field name inside a query condition: `email` in `query Customer where email != ""`. A select field is a reference, as on a row. */
 export interface QueryField {
   kind: "QueryField";
   record: RecordSchema;
   field: FieldSchema;
-  type: FieldType;
+  type: MyntType;
   span: Span;
 }
 
@@ -389,8 +501,15 @@ export interface QueryField {
  * their combinations.
  */
 export type QueryPredicate =
-  | { kind: "Compare"; field: FieldSchema; operation: ComparisonOperation; value: QueryValue }
-  | { kind: "Flag"; field: FieldSchema; value: boolean }
+  | { kind: "Compare"; field: FieldSchema; join: JoinStep | undefined; operation: ComparisonOperation; value: QueryValue }
+  /**
+   * A select field compared with references by identity: `entity ==
+   * Customer(123)`. The field refers to `record`, every operand refers to
+   * the same record type, and only ids take part. `values` is a list so a
+   * membership form (`entity in [...]`) is the same leaf with more values.
+   */
+  | { kind: "CompareReference"; field: FieldSchema; join: JoinStep | undefined; record: RecordSchema; operation: EqualityOperation; values: ReferenceOperand[] }
+  | { kind: "Flag"; field: FieldSchema; join: JoinStep | undefined; value: boolean }
   | { kind: "And"; left: QueryPredicate; right: QueryPredicate }
   | { kind: "Or"; left: QueryPredicate; right: QueryPredicate }
   | { kind: "Not"; operand: QueryPredicate };
@@ -398,21 +517,126 @@ export type QueryPredicate =
 export type QueryValue = { kind: "Constant"; value: string | number | boolean } | { kind: "Local"; local: LocalSymbol };
 
 /**
+ * A reference in a predicate: `Customer(123)` or `Customer(n)`, carried as
+ * its id, or a reference-typed local (identity or display; only its id is
+ * used). Never a display text, never a reference object.
+ */
+export type ReferenceOperand = { kind: "Id"; value: QueryValue } | { kind: "Local"; local: LocalSymbol };
+
+/**
+ * Where a search's definition comes from: built here from the record type
+ * and the predicate (`adHoc`), or loaded from an existing saved search by
+ * its script id (`saved`), keeping that search's own filters and columns.
+ * A query is always ad hoc.
+ */
+export type SearchSource =
+  | { kind: "adHoc" }
+  | {
+      kind: "saved";
+      id: BoundExpression;
+      /** The `saved ... id` clause. Not named `span`: the source is a property of the Query, not a node of its own. */
+      clause: Span;
+      /** Where the result record type came from: written in source, or the account snapshot's saved-search metadata. */
+      recordFrom: "explicit" | "snapshot";
+      /** The N/search type `search.load` must be passed, for a standalone search type the snapshot marks; undefined otherwise. */
+      loadType: string | undefined;
+    };
+
+/**
  * `query Customer where ...` or `search Customer where ...`: an executed
  * query whose value is the materialized result. `condition` is the bound
  * expression as written, for tooling; `predicate` is the backend-neutral
  * form of it. For a search, `filter` is the predicate translated into
  * N/search terms, which the emitter lowers; a query lowers `predicate`
- * directly. Only the programmer's `operation` decides the backend.
+ * directly. Only the programmer's `operation` decides the backend, and
+ * only `source` says whether a saved search is loaded first.
  */
 export interface Query {
   kind: "Query";
   operation: QueryOperation;
+  source: SearchSource;
   recordType: RecordTypeReference;
   condition: BoundExpression | undefined;
   predicate: QueryPredicate | undefined;
   filter: SearchPredicate | undefined;
-  type: SequenceType;
+  /**
+   * The `select` clause: the fields the rows expose, each a field of the
+   * searched record or a field one join away, bound in the condition scope
+   * so they are the same nodes a `where` uses. Undefined means the rows
+   * expose every schema field and the planner fetches what is read.
+   */
+  select: (SelectedField | SelectedAggregate)[] | undefined;
+  /** The `group by` clause, in key order: the summary buckets. Undefined when there is none. */
+  groupBy: GroupKey[] | undefined;
+  /** Summary mode: a `group by` clause, or an aggregate in `select`. The rows are then summary rows, never records. */
+  summary: boolean;
+  /** The `order by` clause, in key order. Undefined means the backend's own order (ad hoc: by internal id; saved: as defined). */
+  orderBy: SortSpec[] | undefined;
+  /** The `limit` clause: at most this many rows, a positive integer; the result stays a sequence. */
+  limit: number | undefined;
+  /** The `first` clause: the result is one optional row instead of a sequence. Never with `limit`. */
+  first: boolean;
+  type: SequenceType | OptionalType;
+  span: Span;
+}
+
+export interface SelectedField {
+  kind: "SelectedField";
+  field: QueryField | JoinedQueryField;
+  span: Span;
+}
+
+/**
+ * `total = sum(amount)` in a `select`: an aggregate over a source field
+ * (or over rows, for `count()`), exposed on the summary row under its
+ * alias. The alias is a result name, never a schema field; `aliasSpan` is
+ * its declaration for tooling.
+ */
+export interface SelectedAggregate {
+  kind: "SelectedAggregate";
+  alias: string;
+  aliasSpan: Span;
+  aggregate: AggregateKind;
+  /** The aggregate name as written, for tooling. */
+  functionSpan: Span;
+  /** The source field; undefined for `count()`. */
+  argument: QueryField | JoinedQueryField | undefined;
+  /** The result field this item defines on the row. */
+  result: ResultField;
+  type: MyntType;
+  span: Span;
+}
+
+/** `order by total`: a sort key naming a summary result (an aggregate alias) rather than a source field. */
+export interface AliasReference {
+  kind: "AliasReference";
+  item: SelectedAggregate;
+  type: MyntType;
+  span: Span;
+}
+
+/** `group by entity`: one grouping field, a field of the record or one join away, bound in the condition scope like a `where` field. */
+export interface GroupKey {
+  kind: "GroupKey";
+  field: QueryField | JoinedQueryField;
+  span: Span;
+}
+
+export interface SortSpec {
+  kind: "SortSpec";
+  /** The sort key: a source field, or in a summary search a result name. */
+  field: QueryField | JoinedQueryField | AliasReference;
+  direction: "asc" | "desc";
+  span: Span;
+}
+
+/** `row.total` on a summary row: an aggregate result read by its alias. Grouped fields read as FieldRead/JoinedFieldRead, like an ordinary row's. */
+export interface ResultFieldRead {
+  kind: "ResultFieldRead";
+  receiver: BoundExpression;
+  result: ResultField;
+  nameSpan: Span;
+  type: MyntType;
   span: Span;
 }
 
@@ -437,17 +661,46 @@ export interface BoundBoolLiteral {
   span: Span;
 }
 
-export type ComparisonOperation = "Equal" | "NotEqual" | "Less" | "LessOrEqual" | "Greater" | "GreaterOrEqual";
+/**
+ * `Equal`/`NotEqual` are the loose operators (`==`/`!=`, JavaScript's
+ * abstract equality); `StrictEqual`/`StrictNotEqual` are `===`/`!==`. The
+ * distinction is kept all the way into the backends: an ordinary
+ * expression emits exactly the operator written, and a backend that has
+ * no coercion decides per operand types whether the loose form is exact.
+ */
+export type EqualityOperation = "Equal" | "NotEqual" | "StrictEqual" | "StrictNotEqual";
+
+export type ComparisonOperation = EqualityOperation | "Less" | "LessOrEqual" | "Greater" | "GreaterOrEqual";
+
+export const EQUALITY_OPERATIONS: readonly EqualityOperation[] = ["Equal", "NotEqual", "StrictEqual", "StrictNotEqual"];
+
+export function isEqualityOperation(operation: ComparisonOperation): operation is EqualityOperation {
+  return (EQUALITY_OPERATIONS as readonly string[]).includes(operation);
+}
+
+/** Whether an equality operation asserts sameness (`==`, `===`) rather than difference. */
+export function assertsEqual(operation: EqualityOperation): boolean {
+  return operation === "Equal" || operation === "StrictEqual";
+}
+
+/** The loose or strict mode of an equality operation. */
+export function equalityMode(operation: EqualityOperation): "loose" | "strict" {
+  return operation === "Equal" || operation === "NotEqual" ? "loose" : "strict";
+}
 
 /**
- * A type-checked comparison. Both operands have `operandType`, and the
- * operation is defined for that type (ordering only on Number). The emitter
- * only spells the operation; it never decides whether two types compare.
+ * A type-checked comparison. `operandType` is what the equality table
+ * (equality.ts) found: one primitive on both sides, `Reference` for two
+ * references to one record type (compared by id, equality only), or
+ * `Mixed` for a loose comparison across primitive types, which runs as
+ * JavaScript's abstract equality and which backends without coercion
+ * refuse. Ordering is defined on Number only. The emitter only spells the
+ * operation; it never decides whether two types compare.
  */
 export interface Comparison {
   kind: "Comparison";
   operation: ComparisonOperation;
-  operandType: "Text" | "Number";
+  operandType: "Text" | "Number" | "Bool" | "Reference" | "Mixed";
   left: BoundExpression;
   right: BoundExpression;
   type: "Bool";
@@ -468,7 +721,8 @@ export interface FieldRead {
   field: FieldSchema;
   /** Where the field name is written. */
   fieldSpan: Span;
-  type: FieldType;
+  /** The value's type: the field type, or a reference for a select field whose target the schema names. */
+  type: MyntType;
   span: Span;
 }
 

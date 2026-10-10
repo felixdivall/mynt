@@ -12,11 +12,17 @@ import type { Span } from "../diagnostics.js";
 import { BOOL_LITERALS, DECLARATION_KEYWORDS, QUERY_OPERATIONS } from "../parser/ast.js";
 import type { FieldSchema, RecordSchema, SublistSchema } from "../schema/types.js";
 import type {
+  BoundForEach,
   BoundFunction,
   BuiltinReference,
   FieldRead,
   FunctionReference,
   FieldWrite,
+  AliasReference,
+  ResultFieldRead,
+  SelectedAggregate,
+  JoinedFieldRead,
+  JoinedQueryField,
   LineInitializer,
   LocalDeclaration,
   LocalReference,
@@ -26,11 +32,12 @@ import type {
   QueryField,
   RecordTypeReference,
   SublistAccess,
+  TryCatch,
 } from "./bound.js";
 import type { Builtin } from "./builtins.js";
 import { resolveName } from "./binder.js";
 import { boundPathAt, contains, type SemanticDocument, type TreeNode } from "./query.js";
-import { isLineType, isProjectionType, isRecordType, type MyntType } from "./types.js";
+import { isLineType, isProjectionType, isRecordType, type MyntType, type ResultField } from "./types.js";
 
 export type SemanticSymbol =
   | { kind: "local"; local: LocalSymbol }
@@ -39,7 +46,9 @@ export type SemanticSymbol =
   | { kind: "sublist"; record: RecordSchema; sublist: SublistSchema }
   | { kind: "recordType"; record: RecordSchema }
   | { kind: "builtin"; builtin: Builtin }
-  | { kind: "function"; function: BoundFunction };
+  | { kind: "function"; function: BoundFunction }
+  /** An aggregate's result name (`total = sum(amount)`): identity is the SelectedAggregate node that declares it. */
+  | { kind: "resultField"; aggregate: SelectedAggregate };
 
 export interface SymbolReference {
   /** The identifier only, never the enclosing expression. */
@@ -61,6 +70,8 @@ export function symbolName(symbol: SemanticSymbol): string {
       return symbol.builtin.name;
     case "function":
       return symbol.function.name;
+    case "resultField":
+      return symbol.aggregate.alias;
   }
 }
 
@@ -74,6 +85,11 @@ export function symbolAt(doc: SemanticDocument, offset: number): SemanticSymbol 
     case "LocalDeclaration": {
       const { local } = node as unknown as LocalDeclaration;
       return contains(local.declaredAt, offset) ? { kind: "local", local } : undefined;
+    }
+    case "ForEach":
+    case "TryCatch": {
+      const local = node.kind === "ForEach" ? (node as unknown as BoundForEach).local : (node as unknown as TryCatch).binding;
+      return local && contains(local.declaredAt, offset) ? { kind: "local", local } : undefined;
     }
     case "FieldRead":
     case "FieldWrite": {
@@ -95,6 +111,11 @@ export function symbolAt(doc: SemanticDocument, offset: number): SemanticSymbol 
       const field = node as unknown as QueryField;
       return { kind: "field", record: field.record, field: field.field };
     }
+    case "JoinedFieldRead":
+    case "JoinedQueryField": {
+      const joined = node as unknown as JoinedFieldRead | JoinedQueryField;
+      return contains(joined.fieldSpan, offset) ? { kind: "field", record: joined.join.target, field: joined.field } : undefined;
+    }
     case "LookupField": {
       const lookup = path[path.length - 2] as unknown as Lookup | undefined;
       return lookup?.kind === "Lookup" ? { kind: "field", record: lookup.record, field: (node as unknown as LookupField).field } : undefined;
@@ -107,6 +128,18 @@ export function symbolAt(doc: SemanticDocument, offset: number): SemanticSymbol 
     }
     case "FunctionReference":
       return { kind: "function", function: (node as unknown as FunctionReference).function };
+    case "SelectedAggregate": {
+      const aggregate = node as unknown as SelectedAggregate;
+      return contains(aggregate.aliasSpan, offset) ? { kind: "resultField", aggregate } : undefined;
+    }
+    case "AliasReference":
+      return { kind: "resultField", aggregate: (node as unknown as AliasReference).item };
+    case "ResultFieldRead": {
+      const read = node as unknown as ResultFieldRead;
+      if (!contains(read.nameSpan, offset)) return undefined;
+      const aggregate = aggregateOf(doc, read.result);
+      return aggregate ? { kind: "resultField", aggregate } : undefined;
+    }
     default:
       break;
   }
@@ -128,9 +161,18 @@ function parameterDeclaredAt(doc: SemanticDocument, offset: number): LocalSymbol
   return undefined;
 }
 
+/** The aggregate item that declared a summary row's result field: the one whose result descriptor it is. */
+function aggregateOf(doc: SemanticDocument, result: ResultField): SelectedAggregate | undefined {
+  for (const node of allBoundNodes(doc)) {
+    if (node.kind === "SelectedAggregate" && (node as unknown as SelectedAggregate).result === result) return node as unknown as SelectedAggregate;
+  }
+  return undefined;
+}
+
 export function declarationOf(symbol: SemanticSymbol): Span | undefined {
   if (symbol.kind === "local") return symbol.local.declaredAt;
   if (symbol.kind === "function") return symbol.function.nameSpan;
+  if (symbol.kind === "resultField") return symbol.aggregate.aliasSpan;
   return undefined;
 }
 
@@ -168,6 +210,8 @@ function sameSymbol(a: SemanticSymbol, b: SemanticSymbol): boolean {
       return a.builtin === (b as typeof a).builtin;
     case "function":
       return a.function === (b as typeof a).function;
+    case "resultField":
+      return a.aggregate === (b as typeof a).aggregate;
   }
 }
 
@@ -244,6 +288,22 @@ export function referencesOf(doc: SemanticDocument, symbol: SemanticSymbol): Sym
         if (sameSymbol(symbol, { kind: "field", record: field.record, field: field.field })) add(field.span);
         break;
       }
+      case "JoinedFieldRead":
+      case "JoinedQueryField": {
+        const joined = node as unknown as JoinedFieldRead | JoinedQueryField;
+        if (sameSymbol(symbol, { kind: "field", record: joined.join.target, field: joined.field })) add(joined.fieldSpan);
+        break;
+      }
+      case "AliasReference": {
+        const reference = node as unknown as AliasReference;
+        if (sameSymbol(symbol, { kind: "resultField", aggregate: reference.item })) add(reference.span);
+        break;
+      }
+      case "ResultFieldRead": {
+        const read = node as unknown as ResultFieldRead;
+        if (symbol.kind === "resultField" && symbol.aggregate.result === read.result) add(read.nameSpan);
+        break;
+      }
       case "Lookup": {
         const lookup = node as unknown as Lookup;
         for (const projected of lookup.fields) {
@@ -276,7 +336,7 @@ export function referencesOf(doc: SemanticDocument, symbol: SemanticSymbol): Sym
 // ---- rename ----------------------------------------------------------------
 
 /** Contextual keywords and literals a local may not be named, whatever the parser would tolerate. */
-const RESERVED = new Set([...DECLARATION_KEYWORDS, "let", "if", "else", "save", "delete", "remove", "add", "for", "in", ...QUERY_OPERATIONS, "where", "return", ...BOOL_LITERALS]);
+const RESERVED = new Set([...DECLARATION_KEYWORDS, "let", "if", "else", "save", "delete", "remove", "add", "for", "in", ...QUERY_OPERATIONS, "where", "return", "try", "catch", "finally", ...BOOL_LITERALS]);
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -301,6 +361,8 @@ export function renameRefusal(symbol: SemanticSymbol): string | undefined {
       return `'${symbol.builtin.name}' is a built-in and cannot be renamed`;
     case "function":
       return undefined;
+    case "resultField":
+      return `'${symbol.aggregate.alias}' is a result name of a search; renaming it (with every read of the row) is not supported yet. Edit the 'select' clause and the reads by hand`;
   }
 }
 

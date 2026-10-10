@@ -140,6 +140,42 @@ describe.skipIf(skip)("tree-sitter grammar", () => {
     expect(captures).toMatch(/keyword.*`where`/);
     expect(captures).toMatch(/variable.*`search`/);
     expect(captures).not.toMatch(/keyword.*`search`/);
+    // A saved search: `saved` is a keyword there and an identifier elsewhere; `search` stays the builtin operation.
+    const saved = run(["query", HIGHLIGHTS, scratch(".saved.mn", `scheduled {\n    let saved = "x"\n    for c in search saved "customsearch_x" where email !== "" {\n    }\n    let n = search saved SystemNote "customsearch_notes"\n}\n`)]);
+    expect(saved).toMatch(/keyword.*`saved`/);
+    expect(saved).toMatch(/variable.*`saved`/);
+    expect(saved).toMatch(/function\.builtin.*`search`/);
+    expect(saved).toMatch(/string.*`"customsearch_x"`/);
+    expect(saved).toMatch(/- type, .*`SystemNote`/);
+    expect(parseTree(scratch(".saved.mn", `scheduled {\n    let c = search saved\n    let d = search saved "\n    let e = search saved Customer\n    let f = search saved Customer "\n    log.debug("next")\n}\n`))).toMatch(/(\(saved_search[\s\S]*){4}/);
+    // Search clauses: the clause words are keywords in a search and identifiers elsewhere; selected and sort fields are properties.
+    const clauses = run(["query", HIGHLIGHTS, scratch(".clauses.mn", `scheduled {\n    let select = "x"\n    let o = search SalesOrder\n        select memo, entity.email\n        where total > 1\n        order by total desc, memo asc\n        limit 5\n    let p = search SalesOrder first\n}\n`)]);
+    for (const word of ["select", "where", "order", "by", "asc", "desc", "limit", "first"]) expect(clauses).toMatch(new RegExp(`keyword, .*\\\`${word}\\\``));
+    expect(clauses).toMatch(/variable.*`select`/);
+    expect(clauses).toMatch(/property.*`memo`/);
+    expect(clauses).toMatch(/property.*`total`/);
+    expect(parseTree(scratch(".clauses.mn", `scheduled {\n    let o = search SalesOrder\n        order by total desc\n        select memo\n        where total > 1\n}\n`))).not.toMatch(/ERROR|MISSING/);
+    // A summary search: `group`/`by` are keywords, an aggregate is a builtin function, its alias a property; `sum` and `group` stay identifiers elsewhere.
+    const summary = run(["query", HIGHLIGHTS, scratch(".summary.mn", `scheduled {\n    let sum = 1\n    let group = sum\n    let t = search SalesOrder\n        order by total desc\n        select entity, total = sum(amount), n = count()\n        group by entity\n}\n`)]);
+    for (const word of ["group", "by"]) expect(summary).toMatch(new RegExp(`keyword, .*\\\`${word}\\\``));
+    expect(summary).toMatch(/function\.builtin.*`sum`/);
+    expect(summary).toMatch(/function\.builtin.*`count`/);
+    expect(summary).toMatch(/property.*`total`/);
+    expect(summary).toMatch(/property.*`n`/);
+    expect(summary).toMatch(/variable.*`sum`/);
+    expect(summary).toMatch(/variable.*`group`/);
+    expect(parseTree(scratch(".summary.mn", `scheduled {\n    let t = search SalesOrder\n        group by entity, subsidiary\n        select entity, total = sum(amount)\n        order by total desc\n        limit 5\n}\n`))).not.toMatch(/ERROR|MISSING/);
+    expect(parseTree(scratch(".summary.mn", `scheduled {\n    let t = search SalesOrder\n        select total = sum(amount)\n        first\n        or return\n}\n`))).toMatch(/aggregate_item[\s\S]*first_clause[\s\S]*or_expression|or_expression[\s\S]*aggregate_item/);
+    // `or` resolves an optional and `try`/`catch`/`finally` recover from a throw; all keywords there, identifiers elsewhere.
+    const optional = run(["query", HIGHLIGHTS, scratch(".optional.mn", `scheduled {\n    let or = true\n    let c = search Customer first\n        or return\n    try {\n        save c\n    } catch err {\n        log.error(err)\n    } finally {\n        log.debug("x")\n    }\n}\n`)]);
+    for (const word of ["or", "try", "catch", "finally"]) expect(optional).toMatch(new RegExp(`keyword, .*\\\`${word}\\\``));
+    expect(optional).toMatch(/variable.*`or`/);
+    expect(optional).toMatch(/variable.*`err`/);
+    expect(parseTree(scratch(".optional.mn", `scheduled {\n    let c = search Customer first\n        or {\n            return\n        }\n    try {\n    } catch {\n    }\n}\n`))).not.toMatch(/ERROR|MISSING/);
+    // All four equality operators are operators, and `===` is one token, never `==` then `=`.
+    const equality = run(["query", HIGHLIGHTS, scratch(".equality.mn", `scheduled {\n    if a === b || c !== d || e == f || g != h { }\n}\n`)]);
+    for (const operator of ["===", "!==", "==", "!="]) expect(equality).toMatch(new RegExp(`operator, .*\\\`${operator}\\\``));
+    expect(parseTree(scratch(".equality.mn", `scheduled {\n    if a === b { }\n}\n`))).not.toMatch(/ERROR|MISSING|assignment/);
     // No indexing: a number inside the brackets is an error, as in the compiler.
     expect(parseTree(scratch(".search.mn", `scheduled {\n    let e = rows[0]\n}\n`))).toMatch(/ERROR/);
   });

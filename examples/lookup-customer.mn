@@ -9,7 +9,7 @@ scheduled {
     let info = customer[email, comments]
     log.debug(info.comments)
 
-    if info.email == "" {
+    if info.email === "" {
         let record = load Customer(customer.id)
         record.email = "unknown@example.com"
         save record

@@ -1,4 +1,4 @@
-import { DiagnosticBag, DiagnosticCode, type Span } from "../diagnostics.js";
+import { DiagnosticBag, DiagnosticCode, spanFrom, type Span } from "../diagnostics.js";
 import type {
   AddStatement,
   BinaryExpression,
@@ -14,10 +14,15 @@ import type {
   IfStatement,
   LetStatement,
   MemberExpression,
+  OrExpression,
   ProjectionExpression,
   QueryExpression,
   QueryOperation,
+  SelectItem,
+  AggregateCall,
   RemoveStatement,
+  SearchClause,
+  TryStatement,
   ReturnStatement,
   SaveStatement,
   ScheduledDeclaration,
@@ -48,36 +53,56 @@ import {
   type BuiltinReference,
   type Comparison,
   type FunctionCall,
+  type JoinedFieldRead,
+  type JoinedQueryField,
+  type JoinStep,
   type LineBinding,
+  type QueryField,
+  type SelectedField,
+  type SelectedAggregate,
+  type AliasReference,
+  type GroupKey,
+  type SortSpec,
   type LineInitializer,
   type ComparisonOperation,
+  type EqualityOperation,
+  assertsEqual,
+  equalityMode,
+  isEqualityOperation,
   type LocalSymbol,
   type Logical,
   type Lookup,
+  type OptionalResolve,
   type LookupField,
   type LookupSource,
   type Query,
   type QueryPredicate,
   type SublistAccess,
   type QueryValue,
+  type ReferenceOperand,
   type RecordReference,
   type RecordTypeReference,
   type ScopedLocal,
   type ScriptUnit,
   type UserEventType,
 } from "./bound.js";
+import { equalityOf, equalityOperators } from "./equality.js";
 import { toSearchPredicate } from "./search.js";
 import { suggest } from "./suggest.js";
 import {
+  fieldValueType,
   isLineType,
+  isOptionalType,
   isProjectionType,
   isRecordType,
   isReferenceType,
   isRowOrigin,
+  isRowRecord,
   isSequenceType,
   isSublistType,
   PRIMITIVE_TYPE_NAMES,
   primitiveTypeNamed,
+  optionalType,
   projectionType,
   recordType as makeRecordType,
   referenceType,
@@ -86,6 +111,25 @@ import {
   sequenceType,
   sublistName,
   sublistType,
+  exposesField,
+  exposesJoinedField,
+  exposesRelationship,
+  type ExposedField,
+  type FieldSource,
+  type AggregateKind,
+  type ResultField,
+  type SummaryType,
+  isAggregateKind,
+  isSummaryType,
+  isRowLike,
+  summaryType,
+  summarySequenceType,
+  summaryField,
+  summaryAggregate,
+  summaryJoinedField,
+  summaryExposesRelationship,
+  summaryMemberNames,
+  summaryResultNames,
   type LineType,
   type MyntType,
   type ProjectionType,
@@ -132,6 +176,8 @@ type Denotation =
  */
 class Scope {
   private readonly locals = new Map<string, LocalSymbol>();
+  /** Locals whose optional type is known to be present here (`if account { ... }`, or after an `if` whose absence branch left). */
+  private readonly narrowed = new Map<LocalSymbol, MyntType>();
 
   constructor(
     /** Entry point hook, for context-dependent checks such as afterSubmit writes; "function" inside a function body. */
@@ -141,16 +187,20 @@ class Scope {
     private readonly parent?: Scope,
     /** Inside a query condition: the record whose fields bare names denote. */
     readonly queryRecord?: RecordSchema,
+    /** Inside a query condition: which backend reads the fields, for their value types. */
+    readonly querySource?: "query" | "search",
     /** Inside a sublist loop body: the line being iterated. */
     readonly iterating?: LineBinding,
     /** What `return` may carry: a function's declared type, or Void in an entry point. */
     readonly returns: MyntType | "Void" = "Void",
     /** The function whose body this scope belongs to, for messages. */
     readonly functionName?: string,
+    /** Inside a search's source positions (`where`, `group by`, an aggregate's argument): the result names its `select` declares, which are not source names. */
+    readonly resultNames?: ReadonlyMap<string, Span>,
   ) {}
 
   child(block: Block, iterating?: LineBinding): Scope {
-    return new Scope(this.hook, block.span, this, undefined, iterating, this.returns, this.functionName);
+    return new Scope(this.hook, block.span, this, undefined, undefined, iterating, this.returns, this.functionName);
   }
 
   /** Whether `parent.sublist` is being iterated by this scope or an enclosing one. */
@@ -160,12 +210,21 @@ class Scope {
   }
 
   /** The scope of a query condition: the enclosing scope plus the record's fields. */
-  conditionScope(record: RecordSchema, span: Span): Scope {
-    return new Scope(this.hook, span, this, record, undefined, this.returns, this.functionName);
+  conditionScope(record: RecordSchema, span: Span, source: "query" | "search", resultNames?: ReadonlyMap<string, Span>): Scope {
+    return new Scope(this.hook, span, this, record, source, undefined, this.returns, this.functionName, resultNames);
   }
 
   lookup(name: string): LocalSymbol | undefined {
     return this.locals.get(name) ?? this.parent?.lookup(name);
+  }
+
+  /** The type `local` has here: its narrowed type if a presence test proved it, else its declared type. */
+  typeOf(local: LocalSymbol): MyntType {
+    return this.narrowed.get(local) ?? this.parent?.typeOf(local) ?? local.type;
+  }
+
+  narrow(local: LocalSymbol, type: MyntType): void {
+    this.narrowed.set(local, type);
   }
 
   /** Declares `local`, or returns the clash if the name is visible already. */
@@ -190,6 +249,8 @@ const COMPARISON_OPERATORS: Record<
 > = {
   "==": { operation: "Equal", ordering: false },
   "!=": { operation: "NotEqual", ordering: false },
+  "===": { operation: "StrictEqual", ordering: false },
+  "!==": { operation: "StrictNotEqual", ordering: false },
   "<": { operation: "Less", ordering: true },
   "<=": { operation: "LessOrEqual", ordering: true },
   ">": { operation: "Greater", ordering: true },
@@ -211,6 +272,8 @@ function isLogicalOperator(operator: BinaryOperator): operator is LogicalOperato
 const FLIPPED: Record<ComparisonOperation, ComparisonOperation> = {
   Equal: "Equal",
   NotEqual: "NotEqual",
+  StrictEqual: "StrictEqual",
+  StrictNotEqual: "StrictNotEqual",
   Less: "Greater",
   LessOrEqual: "GreaterOrEqual",
   Greater: "Less",
@@ -225,10 +288,24 @@ function queryValue(expression: BoundExpression): QueryValue | undefined {
     case "BoolLiteral":
       return { kind: "Constant", value: expression.value };
     case "LocalReference":
-      return typeof expression.type === "string" && expression.type !== "Void" ? { kind: "Local", local: expression.local } : undefined;
+      return typeof expression.type === "string" && expression.type !== "Void" && expression.type !== "Error" ? { kind: "Local", local: expression.local } : undefined;
     default:
       return undefined;
   }
+}
+
+/**
+ * A reference as a predicate can carry it: `Customer(123)` / `Customer(n)`
+ * by its id, or a reference-typed local. Anything else (a field read, a
+ * lookup) is not captured, as for scalar values.
+ */
+function referenceOperand(expression: BoundExpression): ReferenceOperand | undefined {
+  if (expression.kind === "RecordReference") {
+    const id = queryValue(expression.id);
+    return id ? { kind: "Id", value: id } : undefined;
+  }
+  if (expression.kind === "LocalReference" && isReferenceType(expression.type)) return { kind: "Local", local: expression.local };
+  return undefined;
 }
 
 /** Whether every path through `body` ends in a `return`. Loops do not count: they may run zero times. */
@@ -240,13 +317,30 @@ function definitelyReturns(body: readonly BoundStatement[]): boolean {
   });
 }
 
-/** The source spelling of a simple expression, for hints: `order.item`. */
+/** `where`, `select`, `order by`, `take`, for messages. */
+function clauseName(clause: SearchClause): string {
+  return { WhereClause: "where", SelectClause: "select", OrderByClause: "order by", GroupByClause: "group by", LimitClause: "limit", FirstClause: "first" }[clause.kind];
+}
+
+/** The result names a search's `select` declares (`total = sum(amount)`), by name, before anything binds. */
+function resultNamesOf(expression: QueryExpression): ReadonlyMap<string, Span> {
+  const names = new Map<string, Span>();
+  for (const clause of expression.clauses) {
+    if (clause.kind !== "SelectClause") continue;
+    for (const item of clause.items) if (item.alias && item.value.kind === "AggregateCall" && !names.has(item.alias.name)) names.set(item.alias.name, item.alias.span);
+  }
+  return names;
+}
+
+/** The source spelling of a simple expression, for hints: `order.item`, `Customer(...)`. */
 function sourceOf(expression: Expression): string {
   switch (expression.kind) {
     case "Identifier":
       return expression.name;
     case "MemberExpression":
       return `${sourceOf(expression.object)}.${expression.property.name}`;
+    case "CallExpression":
+      return `${sourceOf(expression.callee)}${expression.typeArgument ? ` ${expression.typeArgument.name}` : ""}(...)`;
     default:
       return "...";
   }
@@ -520,7 +614,7 @@ class Binder {
   private bindFunctionBody(declaration: FunctionDeclaration): void {
     const fn = this.functions.get(declaration.name.name);
     if (!fn || fn.nameSpan !== declaration.name.span) return; // a duplicate: its body is not bound
-    const scope = new Scope("function", declaration.body.span, undefined, undefined, undefined, fn.returnType, fn.name);
+    const scope = new Scope("function", declaration.body.span, undefined, undefined, undefined, undefined, fn.returnType, fn.name);
     for (const parameter of fn.parameters) {
       scope.declare(parameter);
       this.symbols.push({ local: parameter, scope: declaration.body.span });
@@ -646,6 +740,8 @@ class Binder {
         return this.bindAdd(statement, scope);
       case "ReturnStatement":
         return this.bindReturn(statement, scope);
+      case "TryStatement":
+        return this.bindTry(statement, scope);
       case "ExpressionStatement": {
         const value = this.bindValue(statement.expression, scope);
         // Only calls have an effect. A bare field read binds (so its errors are
@@ -661,7 +757,8 @@ class Binder {
   }
 
   private bindLet(statement: LetStatement, scope: Scope): BoundStatement | undefined {
-    const initializer = this.bindValue(statement.initializer, scope);
+    // `let x = value or ...` is the one place an optional is resolved: the emitter hoists the test before the binding.
+    const initializer = statement.initializer.kind === "OrExpression" ? this.bindOptionalResolve(statement.initializer, scope) : this.bindValue(statement.initializer, scope);
     if (!initializer) return undefined;
 
     if (initializer.type === "Void") {
@@ -1101,6 +1198,14 @@ class Binder {
       const line: LineType = { kind: "Line", parent: iterable.type.parent, sublist: iterable.type.sublist };
       return line;
     }
+    if (isOptionalType(iterable.type)) {
+      this.diagnostics.error(
+        DiagnosticCode.NotIterable,
+        `Cannot iterate over a ${typeName(iterable.type)} value: a search with 'first' is one optional row, not a sequence. Use 'limit 1' for a sequence of at most one row`,
+        syntax.span,
+      );
+      return undefined;
+    }
     const hint = isRecordType(iterable.type)
       ? iterable.type.record.sublists.size > 0
         ? `a sublist of it, like 'for line in ${sourceOf(syntax)}.${[...iterable.type.record.sublists.keys()][0]}', or`
@@ -1115,7 +1220,14 @@ class Binder {
   }
 
   private bindIf(statement: IfStatement, scope: Scope): BoundStatement | undefined {
-    const condition = this.bindValue(statement.condition, scope);
+    let condition = this.bindValue(statement.condition, scope);
+
+    // `if account { ... }` on an optional local: a presence test, the one non-boolean condition. Not truthiness: nothing else qualifies.
+    let presence: { local: LocalSymbol; element: RecordType | SummaryType } | undefined;
+    if (condition && condition.kind === "LocalReference" && isOptionalType(condition.type)) {
+      presence = { local: condition.local, element: condition.type.element };
+      condition = { kind: "OptionalPresence", reference: condition, type: "Bool", span: condition.span };
+    }
 
     if (condition && condition.type !== "Bool") {
       // No truthiness: "" / 0 / a record reference are not conditions.
@@ -1128,11 +1240,75 @@ class Binder {
     }
 
     // Bind both branches even when the condition failed, so their errors surface.
-    const thenBody = this.bindBlock(statement.thenBlock, scope.child(statement.thenBlock));
+    const thenScope = scope.child(statement.thenBlock);
+    if (presence) thenScope.narrow(presence.local, presence.element);
+    const thenBody = this.bindBlock(statement.thenBlock, thenScope);
     const elseBody = statement.elseBlock ? this.bindBlock(statement.elseBlock, scope.child(statement.elseBlock)) : undefined;
+    // When the absence branch leaves (`else { return }`), what follows sees the local present.
+    if (presence && elseBody && definitelyReturns(elseBody)) scope.narrow(presence.local, presence.element);
 
     if (!condition || condition.type !== "Bool") return undefined;
     return { kind: "If", condition, thenBody, elseBody, span: statement.span };
+  }
+
+  /**
+   * `value or return` / `value or { ... }` as a `let` initializer. The value
+   * must be optional; the branch, bound as a block of its own, must end in
+   * `return` on every path (the same check functions use), so the local
+   * is the inner type. Nothing here is specific to searches: any `T?` is
+   * resolved the same way.
+   */
+  private bindOptionalResolve(expression: OrExpression, scope: Scope): BoundExpression | undefined {
+    const value = this.bindValue(expression.value, scope);
+    const absence = this.bindBlock(expression.branch, scope.child(expression.branch));
+    if (!value) return undefined;
+    if (!isOptionalType(value.type)) {
+      this.diagnostics.error(
+        DiagnosticCode.OrRequiresOptional,
+        `'or' requires an optional value, and this expression has type ${typeName(value.type)}. Only a search with 'first' produces an optional so far`,
+        expression.orSpan,
+      );
+      return undefined;
+    }
+    if (expression.branch.statements.length === 0) return undefined; // cut short; the parser reported it
+    if (!definitelyReturns(absence)) {
+      this.diagnostics.error(
+        DiagnosticCode.OrBranchContinues,
+        "The 'or' branch may continue without producing a value. End the branch with 'return' on every path",
+        expression.orSpan,
+      );
+      return undefined;
+    }
+    const resolved: OptionalResolve = { kind: "OptionalResolve", value, absence, type: value.type.element, span: expression.span };
+    this.expressions.push(resolved);
+    return resolved;
+  }
+
+  /** `try { } catch err { } finally { }`: three ordinary blocks; the error local is scoped to the handler and typed Error. */
+  private bindTry(statement: TryStatement, scope: Scope): BoundStatement | undefined {
+    const body = this.bindBlock(statement.body, scope.child(statement.body));
+    let binding: LocalSymbol | undefined;
+    let handler: BoundStatement[] | undefined;
+    if (statement.handler) {
+      const handlerScope = scope.child(statement.handler);
+      if (statement.binding) {
+        binding = { name: statement.binding.name, type: "Error", origin: "catch", declaredAt: statement.binding.span };
+        const clash = handlerScope.declare(binding);
+        if (clash) {
+          this.diagnostics.error(
+            DiagnosticCode.DuplicateLocal,
+            `'${binding.name}' is already declared in an enclosing scope (line ${clash.existing.declaredAt.start.line}); choose another name for the caught error`,
+            statement.binding.span,
+          );
+          binding = undefined;
+        } else {
+          this.symbols.push({ local: binding, scope: statement.handler.span });
+        }
+      }
+      handler = this.bindBlock(statement.handler, handlerScope);
+    }
+    const finalizer = statement.finalizer ? this.bindBlock(statement.finalizer, scope.child(statement.finalizer)) : undefined;
+    return { kind: "TryCatch", body, binding, handler, finalizer, span: statement.span };
   }
 
   private reportUnknownField(record: RecordSchema, property: Identifier, queryRow = false): void {
@@ -1258,6 +1434,15 @@ class Binder {
       case "ProjectionExpression":
         return this.denoteProjection(expression, scope);
 
+      case "OrExpression":
+        this.bindValue(expression.value, scope);
+        this.diagnostics.error(
+          DiagnosticCode.OrRequiresOptional,
+          "'or' resolves an optional value where a local is declared: write 'let x = ... or return' (or 'or { ... }'), then use 'x'",
+          expression.orSpan,
+        );
+        return undefined;
+
       case "UnaryExpression":
         return this.denoteNot(expression, scope);
     }
@@ -1326,6 +1511,69 @@ class Binder {
     if (isLogicalOperator(operator)) throw new Error(`'${operator}' is not a comparison`);
     const { operation, ordering } = COMPARISON_OPERATORS[operator];
 
+    // A reference whose target the schema does not name, or a multiselect,
+    // cannot be compared with anything: identity needs a known record type.
+    for (const [side, syntax] of [
+      [left, expression.left],
+      [right, expression.right],
+    ] as const) {
+      if (side.type !== "Ref") continue;
+      const field = side.kind === "QueryField" || side.kind === "FieldRead" || side.kind === "JoinedQueryField" || side.kind === "JoinedFieldRead" ? side.field : undefined;
+      this.diagnostics.error(
+        DiagnosticCode.UnsupportedComparison,
+        field?.selection === "multiple"
+          ? `'${field.id}' is a multiselect: it holds several references, so '${operator}' against one reference has no meaning. A membership test for multiselects is not supported yet`
+          : `Cannot compare ${field ? `'${field.id}'` : "this reference"}: Mynt cannot verify which record type it refers to, because the schema metadata names no target for it. ` +
+            `Comparisons between references need a known target on both sides`,
+        syntax.span,
+      );
+      return undefined;
+    }
+
+    // Ordering stays what it was: Number on both sides. Equality goes through the equality table.
+    if (ordering) return this.denoteOrdering(expression, operation, left, right);
+    if (!isEqualityOperation(operation)) throw new Error(`${operation} is neither ordering nor equality`);
+    const mode = equalityMode(operation);
+    const equality = equalityOf(left.type, right.type, mode);
+    if (equality.kind === "incompatible") {
+      const reference = isReferenceType(left.type) ? left.type : isReferenceType(right.type) ? right.type : undefined;
+      const other = isReferenceType(left.type) ? right : left;
+      const spelled = equalityOperators(mode);
+      let message = `Cannot compare ${typeName(left.type)} with ${typeName(right.type)}: both sides of '${operator}' must have the same type`;
+      if (equality.reason === "strict") {
+        message =
+          `Strict equality cannot compare ${typeName(left.type)} with ${typeName(right.type)}. ` +
+          `Use '${equalityOperators("loose")[assertsEqual(operation) ? "equal" : "notEqual"]}' if a coercive comparison is intended, or compare values of one type`;
+      } else if (reference && isReferenceType(other.type)) {
+        message = `Cannot compare a ${(left.type as ReferenceType).record.name} reference with a ${(right.type as ReferenceType).record.name} reference: they refer to different record types`;
+      } else if (reference && (other.kind === "QueryField" || other.kind === "FieldRead" || other.kind === "JoinedQueryField" || other.kind === "JoinedFieldRead") && (other.type === "Text" || other.type === "Number")) {
+        message = `Cannot compare '${other.field.id}', a ${typeName(other.type)} field, with a ${reference.record.name} reference: a reference compares only with a reference to the same record type`;
+      } else if (reference && (other.type === "Text" || other.type === "Number")) {
+        const id = other.kind === "StringLiteral" ? JSON.stringify(other.value) : other.kind === "NumberLiteral" ? String(other.value) : "id";
+        message =
+          `Cannot compare a ${reference.record.name} reference with a ${typeName(other.type)}: a reference compares with a reference, by identity${mode === "loose" ? ", and loose equality does not coerce references" : ""}. ` +
+          `Write the reference, ${reference.record.name}(${id}), so the record type is checked, rather than its raw id`;
+      } else if (reference) {
+        message = `Cannot compare a ${reference.record.name} reference with ${typeName(other.type)}: a reference compares only with a reference to the same record type`;
+      } else if (sameType(left.type, right.type)) {
+        const what = isRecordType(left.type) ? `records (${left.type.record.name})` : `${typeName(left.type)} values`;
+        message = `'${operator}' is not defined for ${what}; equality is defined for string, number, boolean, and references`;
+      } else if (mode === "loose") {
+        message = `Cannot compare ${typeName(left.type)} with ${typeName(right.type)}: loose equality ('${spelled.equal}', '${spelled.notEqual}') coerces only between string, number, and boolean`;
+      }
+      this.diagnostics.error(equality.reason === "domain" && sameType(left.type, right.type) ? DiagnosticCode.UnsupportedComparison : DiagnosticCode.IncomparableTypes, message, expression.span);
+      return undefined;
+    }
+
+    // Identity equality on references: `.id` on both sides, whether or not either carries text; the mode changes nothing.
+    const operandType = equality.kind === "reference" ? "Reference" : equality.kind === "coercive" ? "Mixed" : equality.type;
+    const comparison: Comparison = { kind: "Comparison", operation, operandType, left, right, type: "Bool", span: expression.span };
+    return { kind: "value", type: "Bool", bound: comparison };
+  }
+
+  /** `<` `<=` `>` `>=`: Number on both sides, nothing else. */
+  private denoteOrdering(expression: BinaryExpression, operation: ComparisonOperation, left: BoundExpression, right: BoundExpression): Denotation | undefined {
+    const { operator } = expression;
     if (!sameType(left.type, right.type)) {
       this.diagnostics.error(
         DiagnosticCode.IncomparableTypes,
@@ -1334,40 +1582,12 @@ class Binder {
       );
       return undefined;
     }
-
-    const operandType = left.type;
-    if (operandType !== "Text" && operandType !== "Number") {
-      const what = isRecordType(operandType) ? `records (${operandType.record.name})` : `${typeName(operandType)} values`;
-      const hint =
-        operandType === "Bool" && (operator === "==" || operator === "!=")
-          ? `. Use a boolean directly as a condition: 'if x' or 'if !x'`
-          : "";
-      this.diagnostics.error(
-        DiagnosticCode.UnsupportedComparison,
-        `'${operator}' is not defined for ${what}; comparisons are defined for string and number values${hint}`,
-        expression.operatorSpan,
-      );
+    if (left.type !== "Number") {
+      const what = isReferenceType(left.type) ? "references; references compare by identity with == and !=" : `${typeName(left.type)} values; ordering comparisons require number operands`;
+      this.diagnostics.error(DiagnosticCode.UnsupportedComparison, `'${operator}' is not defined for ${what}`, expression.operatorSpan);
       return undefined;
     }
-
-    if (ordering && operandType !== "Number") {
-      this.diagnostics.error(
-        DiagnosticCode.UnsupportedComparison,
-        `'${operator}' is not defined for ${typeName(operandType)} values; ordering comparisons require number operands`,
-        expression.operatorSpan,
-      );
-      return undefined;
-    }
-
-    const comparison: Comparison = {
-      kind: "Comparison",
-      operation,
-      operandType,
-      left,
-      right,
-      type: "Bool",
-      span: expression.span,
-    };
+    const comparison: Comparison = { kind: "Comparison", operation, operandType: "Number", left, right, type: "Bool", span: expression.span };
     return { kind: "value", type: "Bool", bound: comparison };
   }
 
@@ -1380,13 +1600,26 @@ class Binder {
    * executed result, a Sequence of rows of the chosen backend.
    */
   private denoteQuery(expression: QueryExpression, scope: Scope): Denotation | undefined {
-    const record = this.resolveRecordTypeName(expression.recordType);
     const { operation } = expression;
+    let record = expression.recordType ? this.resolveRecordTypeName(expression.recordType) : undefined;
+    let source: Query["source"] = { kind: "adHoc" };
+    if (expression.saved) {
+      const resolved = this.resolveSavedSearch(expression, record, scope);
+      if (!resolved) return undefined;
+      record = resolved.record;
+      source = resolved.source;
+    } else if (!expression.recordType) {
+      throw new Error("an ad-hoc query names its record type");
+    }
+    // Clauses describe one search in any order; a singleton written twice is a likely mistake, not a merge.
+    const clauses = this.normalizeClauses(expression, operation);
+    // The result names `select` declares, known before anything binds, so a source position can say what a stray alias is.
+    const resultNames = resultNamesOf(expression);
     let condition: BoundExpression | undefined;
     let predicate: QueryPredicate | undefined;
     let filter: Query["filter"];
     if (record && expression.condition) {
-      condition = this.bindValue(expression.condition, scope.conditionScope(record, expression.condition.span));
+      condition = this.bindValue(expression.condition, scope.conditionScope(record, expression.condition.span, operation, resultNames));
       if (!condition) return undefined;
       if (condition.type !== "Bool") {
         this.diagnostics.error(
@@ -1408,20 +1641,494 @@ class Binder {
       this.bindValue(expression.condition, scope); // report its errors even without a record
     }
     if (!record) return undefined;
+    if (!clauses) return undefined;
+    const shape = this.bindSearchShape(clauses, record, operation, scope, resultNames);
+    if (!shape) return undefined;
     this.dependencies.add(operation === "query" ? "N/query" : "N/search");
 
-    const type = sequenceType(record, operation);
+    // `first` is one optional row; everything else is a sequence, `limit 1` included. A summary search's rows are summary rows.
+    const rows = shape.result ? summarySequenceType(summaryType(record, shape.result)) : sequenceType(record, operation, shape.exposes);
+    const type = shape.first ? optionalType(rows.element as RecordType | SummaryType) : rows;
     const query: Query = {
       kind: "Query",
       operation,
-      recordType: { kind: "RecordTypeReference", record, span: expression.recordType.span },
+      source,
+      // An inferred saved-search type has no written name: a zero-width reference at the id, so no token or hover claims the string.
+      recordType: { kind: "RecordTypeReference", record, span: expression.recordType?.span ?? { start: expression.saved!.id!.span.start, end: expression.saved!.id!.span.start } },
       condition,
       predicate,
       filter,
+      select: shape.select,
+      groupBy: shape.groupBy,
+      summary: shape.result !== undefined,
+      orderBy: shape.orderBy,
+      limit: shape.limit,
+      first: shape.first,
       type,
       span: expression.span,
     };
     return { kind: "value", type, bound: query };
+  }
+
+  /**
+   * One clause of each kind, whatever the order written. A second `where`,
+   * `select`, `order by`, or `take` is reported at the repeat with the
+   * first's line: repeating a singleton clause is treated as a mistake
+   * (conditions combine with `&&`/`||`, fields and sort keys share one
+   * clause), never merged. Returns undefined after reporting.
+   */
+  private normalizeClauses(expression: QueryExpression, operation: QueryOperation): Map<SearchClause["kind"], SearchClause> | undefined {
+    const seen = new Map<SearchClause["kind"], SearchClause>();
+    let ok = true;
+    for (const clause of expression.clauses) {
+      if (operation === "query" && clause.kind !== "WhereClause") {
+        this.diagnostics.error(
+          DiagnosticCode.UnsupportedQueryCondition,
+          `'${clauseName(clause)}' is a search clause; 'query' (N/query) supports only 'where' so far. Use 'search' for selection, ordering, grouping, and limits`,
+          clause.keywordSpan,
+        );
+        ok = false;
+        continue;
+      }
+      const earlier = seen.get(clause.kind);
+      if (earlier) {
+        const fix = {
+          WhereClause: "Combine conditions with '&&' or '||'",
+          SelectClause: "Add the fields to the same clause, like 'select a, b'",
+          OrderByClause: "Put every sort key in one clause, like 'order by a desc, b'",
+          GroupByClause: "Put every group field in one clause, like 'group by a, b'",
+          LimitClause: "Keep the one count you mean",
+          FirstClause: "One 'first' is enough",
+        }[clause.kind];
+        this.diagnostics.error(
+          DiagnosticCode.DuplicateSearchClause,
+          `A search can only contain one '${clauseName(clause)}' clause; the first is on line ${earlier.keywordSpan.start.line}. ${fix}`,
+          clause.keywordSpan,
+        );
+        ok = false;
+        continue;
+      }
+      seen.set(clause.kind, clause);
+    }
+    // `first` and `limit` state different cardinalities; together they contradict, whichever came first.
+    const first = seen.get("FirstClause");
+    const limit = seen.get("LimitClause");
+    if (first && limit) {
+      const later = first.keywordSpan.start.offset > limit.keywordSpan.start.offset ? first : limit;
+      this.diagnostics.error(
+        DiagnosticCode.InvalidSearchClause,
+        "A search cannot use both 'first' and 'limit'. Use 'first' for a single optional row or 'limit' for a bounded sequence",
+        later.keywordSpan,
+      );
+      ok = false;
+    }
+    return ok ? seen : undefined;
+  }
+
+  /**
+   * `select`, `group by`, `order by`, `limit`, and `first`, bound in the
+   * condition scope so that a bare name is the record's field and
+   * `entity.email` its one-hop join, exactly as in `where`. `select` fixes
+   * what the rows expose; sort keys are backend columns that expose nothing
+   * by themselves.
+   *
+   * A `group by`, or an aggregate in `select`, makes the search a summary
+   * search: its rows are aggregate buckets exposing exactly the grouped
+   * fields and the named aggregates (`result`), every selected plain field
+   * must be grouped, and `order by` names result fields (a grouped field or
+   * an alias), whatever order the clauses were written in: aliases are
+   * collected from `select` before any sort key binds.
+   */
+  private bindSearchShape(
+    clauses: Map<SearchClause["kind"], SearchClause>,
+    record: RecordSchema,
+    operation: QueryOperation,
+    scope: Scope,
+    resultNames: ReadonlyMap<string, Span>,
+  ):
+    | {
+        select: (SelectedField | SelectedAggregate)[] | undefined;
+        groupBy: GroupKey[] | undefined;
+        orderBy: SortSpec[] | undefined;
+        limit: number | undefined;
+        first: boolean;
+        exposes: ExposedField[] | undefined;
+        /** The summary row's result fields; undefined for an ordinary search. */
+        result: ResultField[] | undefined;
+      }
+    | undefined {
+    let ok = true;
+    // Source positions (`group by`, an aggregate's argument) see the result names so a stray alias is reported for what it is; `select` and `order by` resolve them themselves.
+    const bindField = (item: Expression, clause: string, sourcePosition = true): QueryField | JoinedQueryField | undefined => {
+      const bound = this.bindValue(item, scope.conditionScope(record, item.span, operation, sourcePosition ? resultNames : undefined));
+      if (!bound) return undefined;
+      if (bound.kind === "QueryField" || bound.kind === "JoinedQueryField") return bound;
+      this.diagnostics.error(
+        DiagnosticCode.InvalidSearchClause,
+        `'${clause}' names fields of ${record.name} (or one field of a record a field refers to, like 'entity.email'); '${sourceOf(item)}' is not one`,
+        item.span,
+      );
+      return undefined;
+    };
+    const fieldKey = (field: QueryField | JoinedQueryField): string => (field.kind === "JoinedQueryField" ? `${field.join.via.id}.${field.field.id}` : field.field.id);
+    /** The row member a field is exposed under: a joined field sits under its relationship. */
+    const memberName = (field: QueryField | JoinedQueryField): string => (field.kind === "JoinedQueryField" ? field.join.via.id : field.field.id);
+
+    // `group by`: the buckets. Each key is a column the search groups on, exposed only if selected.
+    let groupBy: GroupKey[] | undefined;
+    const grouped = new Map<string, GroupKey>();
+    const groupClause = clauses.get("GroupByClause");
+    if (groupClause?.kind === "GroupByClause") {
+      groupBy = [];
+      if (groupClause.fields.length === 0) ok = false; // reported by the parser
+      for (const item of groupClause.fields) {
+        const field = bindField(item, "group by");
+        if (!field) {
+          ok = false;
+          continue;
+        }
+        const key = fieldKey(field);
+        const earlier = grouped.get(key);
+        if (earlier) {
+          this.diagnostics.error(DiagnosticCode.DuplicateProjectionField, `'${key}' is grouped twice (first at column ${earlier.span.start.column}); list each field once`, item.span);
+          ok = false;
+          continue;
+        }
+        if (field.field.type === "Unknown" || field.field.selection === "multiple") {
+          this.diagnostics.error(
+            DiagnosticCode.InvalidSearchClause,
+            `Cannot group by '${key}': ${field.field.selection === "multiple" ? "a multiselect holds several values, so it does not define one bucket" : "its type is not known well enough to group by"}`,
+            item.span,
+          );
+          ok = false;
+          continue;
+        }
+        const groupKey: GroupKey = { kind: "GroupKey", field, span: item.span };
+        grouped.set(key, groupKey);
+        groupBy.push(groupKey);
+      }
+    }
+
+    // `select`: plain fields, and named aggregates. One flat result namespace: a row member is a field (a joined field's relationship) or an alias, never both.
+    let select: (SelectedField | SelectedAggregate)[] | undefined;
+    let exposes: ExposedField[] | undefined;
+    const aggregates = new Map<string, SelectedAggregate>();
+    const selectClause = clauses.get("SelectClause");
+    if (selectClause?.kind === "SelectClause") {
+      select = [];
+      exposes = [];
+      const listed = new Map<string, Span>();
+      const members = new Map<string, { span: Span; alias: boolean }>();
+      for (const item of selectClause.items) {
+        if (item.value.kind === "AggregateCall") {
+          const aggregate = this.bindAggregate(item, item.value, operation, bindField);
+          if (!aggregate) {
+            ok = false;
+            continue;
+          }
+          const earlier = members.get(aggregate.alias);
+          if (earlier) {
+            this.diagnostics.error(
+              DiagnosticCode.ResultName,
+              `'${aggregate.alias}' is already ${earlier.alias ? "the name of an aggregate" : "a selected field"} of this search (column ${earlier.span.start.column}); a row member means one thing. Give the aggregate another name`,
+              aggregate.aliasSpan,
+            );
+            ok = false;
+            continue;
+          }
+          members.set(aggregate.alias, { span: aggregate.aliasSpan, alias: true });
+          aggregates.set(aggregate.alias, aggregate);
+          select.push(aggregate);
+          continue;
+        }
+        if (item.alias) {
+          this.diagnostics.error(
+            DiagnosticCode.ResultName,
+            `Only an aggregate takes a result name; a field is selected under its own name. Write 'select ${sourceOf(item.value)}', or an aggregate like '${item.alias.name} = sum(${sourceOf(item.value)})'`,
+            item.equalsSpan ?? item.alias.span,
+          );
+          ok = false;
+          continue;
+        }
+        if (item.value.kind === "Identifier" && item.value.name === "") {
+          ok = false; // cut short; the parser reported it
+          continue;
+        }
+        const field = bindField(item.value, "select", false);
+        if (!field) {
+          ok = false;
+          continue;
+        }
+        const key = fieldKey(field);
+        const earlier = listed.get(key);
+        if (earlier) {
+          this.diagnostics.error(DiagnosticCode.DuplicateProjectionField, `'${key}' is selected twice (first at column ${earlier.start.column}); list each field once`, item.span);
+          ok = false;
+          continue;
+        }
+        listed.set(key, item.span);
+        const member = members.get(memberName(field));
+        if (member?.alias) {
+          this.diagnostics.error(
+            DiagnosticCode.ResultName,
+            `'${memberName(field)}' is already the name of an aggregate of this search (column ${member.span.start.column}); a row member means one thing. Give the aggregate another name`,
+            item.span,
+          );
+          ok = false;
+          continue;
+        }
+        if (!member) members.set(memberName(field), { span: item.span, alias: false });
+        select.push({ kind: "SelectedField", field, span: item.span });
+        exposes.push({ field: field.field, join: field.kind === "JoinedQueryField" ? field.join : undefined });
+      }
+      if (select.length === 0) ok = false; // the parser reported the empty list
+    }
+
+    // Summary mode: a `group by`, or an aggregate. Every selected plain field must then be grouped, since a bucket has one value per group.
+    const summary = groupBy !== undefined || aggregates.size > 0;
+    let result: ResultField[] | undefined;
+    if (summary) {
+      result = [];
+      for (const item of select ?? []) {
+        if (item.kind === "SelectedAggregate") {
+          result.push(item.result);
+          continue;
+        }
+        const key = fieldKey(item.field);
+        if (!grouped.has(key)) {
+          const aggregate = item.field.field.type === "Number" ? "sum" : item.field.field.type === "Ref" || item.field.field.type === "Bool" ? "count" : "max";
+          this.diagnostics.error(
+            DiagnosticCode.UngroupedField,
+            `'${key}' must appear in 'group by' or be used inside an aggregate: a summary row has one value per group, and '${key}' varies within one. ` +
+              `Group by it ('group by ${[...grouped.keys(), key].join(", ")}') or aggregate it ('${item.field.field.id} = ${aggregate}(${key})')`,
+            item.span,
+          );
+          ok = false;
+          continue;
+        }
+        result.push({ name: item.field.field.id, summary: "group", field: item.field.field, join: item.field.kind === "JoinedQueryField" ? item.field.join : undefined, type: item.field.type });
+      }
+      // Without `select`, the rows expose the group keys: a distinct list of buckets.
+      if (!select) for (const key of groupBy ?? []) result.push({ name: key.field.field.id, summary: "group", field: key.field.field, join: key.field.kind === "JoinedQueryField" ? key.field.join : undefined, type: key.field.type });
+    }
+
+    // `order by`: source fields, or in a summary search result names: an alias (whatever the clause order), or a grouped field.
+    let orderBy: SortSpec[] | undefined;
+    const orderClause = clauses.get("OrderByClause");
+    if (orderClause?.kind === "OrderByClause") {
+      orderBy = [];
+      if (orderClause.keys.length === 0) ok = false; // reported by the parser
+      for (const key of orderClause.keys) {
+        if (key.field.kind === "Identifier" && resultNames.has(key.field.name)) {
+          const item = aggregates.get(key.field.name);
+          if (!item) {
+            ok = false; // the aggregate itself did not bind, and said why
+            continue;
+          }
+          const reference: AliasReference = { kind: "AliasReference", item, type: item.type, span: key.field.span };
+          this.expressions.push(reference);
+          orderBy.push({ kind: "SortSpec", field: reference, direction: key.direction ?? "asc", span: key.span });
+          continue;
+        }
+        const field = bindField(key.field, "order by", false);
+        if (!field) {
+          ok = false;
+          continue;
+        }
+        if (summary && !grouped.has(fieldKey(field))) {
+          const names = [...grouped.keys(), ...aggregates.keys()];
+          this.diagnostics.error(
+            DiagnosticCode.InvalidSearchClause,
+            `Cannot sort by '${fieldKey(field)}': a summary search orders by its result fields${names.length > 0 ? `, ${names.join(", ")}` : " (a grouped field or an aggregate name)"}; '${fieldKey(field)}' is neither grouped nor aggregated`,
+            key.field.span,
+          );
+          ok = false;
+          continue;
+        }
+        if (field.type === "Ref" || field.field.type === "Unknown") {
+          this.diagnostics.error(
+            DiagnosticCode.InvalidSearchClause,
+            `Cannot sort by '${fieldKey(field)}': ${field.field.selection === "multiple" ? "a multiselect has no single value to order by" : "its type is not known well enough to order by"}`,
+            key.field.span,
+          );
+          ok = false;
+          continue;
+        }
+        orderBy.push({ kind: "SortSpec", field, direction: key.direction ?? "asc", span: key.span });
+      }
+    }
+
+    let limit: number | undefined;
+    const limitClause = clauses.get("LimitClause");
+    if (limitClause?.kind === "LimitClause") {
+      if (!limitClause.count) ok = false; // reported by the parser
+      else if (limitClause.count.kind !== "NumberLiteral" || !Number.isInteger(limitClause.count.value) || limitClause.count.value <= 0) {
+        this.bindValue(limitClause.count, scope);
+        this.diagnostics.error(
+          DiagnosticCode.InvalidSearchClause,
+          `'limit' needs a positive whole number of rows written as a literal, like 'limit 100'${limitClause.count.kind === "NumberLiteral" ? `; ${limitClause.count.value} is not one` : ""}`,
+          limitClause.count.span,
+        );
+        ok = false;
+      } else {
+        limit = limitClause.count.value;
+      }
+    }
+    const first = clauses.has("FirstClause");
+    return ok ? { select, groupBy, orderBy, limit, first, exposes, result } : undefined;
+  }
+
+  /**
+   * `total = sum(amount)`: an aggregate over a source field, which must be
+   * named. The result type follows the aggregate and the field: `sum` and
+   * `avg` take a number and yield one; `min` and `max` take a number, date,
+   * or string and yield the same; `count` takes any field, or `id`, or
+   * nothing (both count rows), and yields a number. Nothing else is
+   * meaningful, so nothing else is accepted.
+   */
+  private bindAggregate(
+    item: SelectItem,
+    call: AggregateCall,
+    operation: QueryOperation,
+    bindField: (item: Expression, clause: string) => QueryField | JoinedQueryField | undefined,
+  ): SelectedAggregate | undefined {
+    const name = call.function.name;
+    if (!isAggregateKind(name)) {
+      this.diagnostics.error(DiagnosticCode.InvalidAggregate, `'${name}' is not an aggregate; 'select' aggregates with sum, count, min, max, and avg`, call.function.span);
+      return undefined;
+    }
+    const written = `${name}(${call.argument ? sourceOf(call.argument) : ""})`;
+    if (!item.alias) {
+      this.diagnostics.error(
+        DiagnosticCode.InvalidAggregate,
+        `An aggregate needs a result name: write '${name === "count" ? "count" : "total"} = ${written}' and read it as that name on the row`,
+        call.span,
+      );
+      return undefined;
+    }
+    if (operation === "query") {
+      this.diagnostics.error(DiagnosticCode.UnsupportedQueryCondition, `Aggregates are a search feature; 'query' (N/query) has no summary support yet. Use 'search'`, call.span);
+      return undefined;
+    }
+    const alias = item.alias.name;
+    let argument: QueryField | JoinedQueryField | undefined;
+    const countsRows = call.argument === undefined || (call.argument.kind === "Identifier" && call.argument.name === "id");
+    if (countsRows) {
+      if (name !== "count") {
+        this.diagnostics.error(
+          DiagnosticCode.InvalidAggregate,
+          call.argument ? `'id' is row identity, not a field; only 'count(id)' (or 'count()') uses it, to count rows` : `'${name}' needs a field to aggregate, like '${name}(amount)'`,
+          call.argument?.span ?? call.span,
+        );
+        return undefined;
+      }
+    } else {
+      argument = bindField(call.argument!, `${name}(...)`);
+      if (!argument) return undefined;
+      const field = argument.field;
+      const accepts: Record<AggregateKind, readonly FieldType[]> = {
+        sum: ["Number"],
+        avg: ["Number"],
+        min: ["Number", "Date", "Text"],
+        max: ["Number", "Date", "Text"],
+        count: ["Text", "Number", "Bool", "Date", "Ref", "Unknown"],
+      };
+      if (!accepts[name].includes(field.type)) {
+        const described = field.type === "Ref" ? "a select field" : field.type === "Bool" ? "a boolean field" : field.type === "Unknown" ? "a field of unknown type" : `a ${typeName(field.type)} field`;
+        this.diagnostics.error(
+          DiagnosticCode.InvalidAggregate,
+          `'${name}' takes ${name === "sum" || name === "avg" ? "a number field" : "a number, date, or string field"}; '${sourceOf(call.argument!)}' is ${described}` +
+            (field.type === "Ref" || field.type === "Bool" ? `. Count it instead: '${alias} = count(${sourceOf(call.argument!)})'` : ""),
+          call.argument!.span,
+        );
+        return undefined;
+      }
+    }
+    const type: MyntType = name === "count" ? "Number" : argument!.field.type;
+    const result: ResultField = { name: alias, summary: name, field: argument?.field, join: argument?.kind === "JoinedQueryField" ? argument.join : undefined, type };
+    const aggregate: SelectedAggregate = { kind: "SelectedAggregate", alias, aliasSpan: item.alias.span, aggregate: name, functionSpan: call.function.span, argument, result, type, span: item.span };
+    this.expressions.push(aggregate);
+    return aggregate;
+  }
+
+  /**
+   * `search saved [T] id`: the saved search's result record type. Mynt does
+   * not make the author repeat what NetSuite owns: a literal id the account
+   * snapshot knows infers the type, and a type is written only when the
+   * snapshot cannot say (an id it does not list, or a dynamic id) or to
+   * assert it, in which case the snapshot checks the assertion. A standalone
+   * search type the snapshot marks is passed to `search.load`; nothing else is.
+   */
+  private resolveSavedSearch(
+    expression: QueryExpression,
+    explicit: RecordSchema | undefined,
+    scope: Scope,
+  ): { record: RecordSchema; source: Query["source"] } | undefined {
+    const clause = expression.saved!;
+    if (!clause.id) return undefined; // the parser reported the missing id
+    const idDenotation = this.denote(clause.id, scope);
+    if (!idDenotation) return undefined;
+    if (idDenotation.kind !== "value") {
+      const written = clause.id.kind === "Identifier" ? clause.id.name : "...";
+      this.diagnostics.error(
+        DiagnosticCode.InvalidSavedSearchId,
+        idDenotation.kind === "recordType"
+          ? `Expected the saved search id after the record type, like 'search saved ${written} "customsearch_x"'; '${written}' alone is a record type, not a script id`
+          : `A saved search is named by its script id, a string like "customsearch_active_customers"`,
+        clause.id.span,
+      );
+      return undefined;
+    }
+    const id = idDenotation.bound;
+    if (id.type !== "Text") {
+      this.diagnostics.error(
+        DiagnosticCode.InvalidSavedSearchId,
+        `A saved search is named by its script id, a string like "customsearch_active_customers", but received ${typeName(id.type)}`,
+        clause.id.span,
+      );
+      return undefined;
+    }
+    if (expression.recordType && !explicit) return undefined; // the unknown type was reported
+    const span = spanFrom(clause.keywordSpan, clause.id.span);
+    const known = id.kind === "StringLiteral" ? this.schema.getSavedSearch(id.value) : undefined;
+    const loadType = known?.searchType;
+    if (explicit) {
+      if (known && known.record !== explicit.name) {
+        this.diagnostics.error(
+          DiagnosticCode.SavedSearchTypeMismatch,
+          `Saved search "${(id as { value: string }).value}" returns ${known.record}, not ${explicit.name}, according to the account snapshot`,
+          expression.recordType!.span,
+        );
+        return undefined;
+      }
+      return { record: explicit, source: { kind: "saved", id, clause: span, recordFrom: "explicit", loadType } };
+    }
+    if (id.kind !== "StringLiteral") {
+      this.diagnostics.error(
+        DiagnosticCode.UnknownSavedSearch,
+        `The result type of a saved search named by a value cannot be inferred; write the record type, like 'search saved Customer ${sourceOf(clause.id)}'`,
+        clause.id.span,
+      );
+      return undefined;
+    }
+    if (!known) {
+      this.diagnostics.error(
+        DiagnosticCode.UnknownSavedSearch,
+        `The current account snapshot does not know the result type of saved search "${id.value}". Write 'search saved Customer "${id.value}"' (with its record type) to provide the type explicitly`,
+        clause.id.span,
+      );
+      return undefined;
+    }
+    const record = this.schema.getRecordByName(known.record);
+    if (!record) {
+      this.diagnostics.error(
+        DiagnosticCode.UnknownSavedSearch,
+        `The account snapshot says saved search "${id.value}" returns ${known.record}, which is not a record type the snapshot defines`,
+        clause.id.span,
+      );
+      return undefined;
+    }
+    return { record, source: { kind: "saved", id, clause: span, recordFrom: "snapshot", loadType } };
   }
 
   /** The predicate shapes the backends can express. Anything else is reported, never approximated. */
@@ -1436,7 +2143,11 @@ class Binder {
     };
     switch (condition.kind) {
       case "QueryField":
-        return condition.type === "Bool" ? { kind: "Flag", field: condition.field, value: true } : unsupported(`'${condition.field.id}' is not a Bool field`);
+        return condition.type === "Bool" ? { kind: "Flag", field: condition.field, join: undefined, value: true } : unsupported(`'${condition.field.id}' is not a Bool field`);
+      case "JoinedQueryField":
+        return condition.type === "Bool"
+          ? { kind: "Flag", field: condition.field, join: condition.join, value: true }
+          : unsupported(`'${condition.join.via.id}.${condition.field.id}' is not a Bool field`);
       case "Not": {
         const operand = this.toPredicate(condition.operand, operation);
         return operand && { kind: "Not", operand };
@@ -1447,20 +2158,66 @@ class Binder {
         return left && right ? { kind: condition.operation === "And" ? "And" : "Or", left, right } : undefined;
       }
       case "Comparison": {
-        const fieldOnLeft = condition.left.kind === "QueryField";
+        const isField = (side: BoundExpression): side is QueryField | JoinedQueryField => side.kind === "QueryField" || side.kind === "JoinedQueryField";
+        const fieldOnLeft = isField(condition.left);
         const fieldSide = fieldOnLeft ? condition.left : condition.right;
         const valueSide = fieldOnLeft ? condition.right : condition.left;
-        if (fieldSide.kind !== "QueryField") {
+        if (!isField(fieldSide)) {
+          const idOfField = [condition.left, condition.right].find((side) => side.kind === "RecordIdRead" && side.receiver.kind === "QueryField");
+          if (idOfField && idOfField.kind === "RecordIdRead" && idOfField.receiver.kind === "QueryField") {
+            const field = idOfField.receiver.field;
+            return unsupported(
+              `compare the reference itself rather than its id: '${field.id} == ${field.refTarget ?? "Record"}(...)' keeps the record type checked`,
+              idOfField.span,
+            );
+          }
           return unsupported("one side of the comparison must be a field of the queried record");
         }
-        if (valueSide.kind === "QueryField") {
+        if (isField(valueSide)) {
           return unsupported("a field can be compared with a value, not with another field");
+        }
+        const join = fieldSide.kind === "JoinedQueryField" ? fieldSide.join : undefined;
+        const backend = operation === "query" ? "N/query" : "N/search";
+        if (condition.operandType === "Mixed") {
+          // JavaScript would coerce; the backend compares typed values and cannot promise the same answer.
+          const fieldType = typeName(fieldSide.type);
+          const spelled = equalityOperators("strict")[assertsEqual(condition.operation as EqualityOperation) ? "equal" : "notEqual"];
+          return unsupported(
+            `loose equality between ${typeName(condition.left.type)} and ${typeName(condition.right.type)} cannot be represented exactly by ${backend}, which compares without coercion. ` +
+              `Use '${spelled}' with a ${fieldType} value instead`,
+            condition.span,
+          );
+        }
+        if (condition.operandType === "Bool") {
+          // `done == true` is the flag itself; `done != true` its negation. A boolean value must be a literal to be a filter.
+          if (valueSide.kind !== "BoolLiteral" || !isEqualityOperation(condition.operation)) {
+            return unsupported(`compare the boolean field '${fieldSide.field.id}' with true or false, or use it as a condition on its own`, valueSide.span);
+          }
+          return { kind: "Flag", field: fieldSide.field, join, value: valueSide.value === assertsEqual(condition.operation) };
+        }
+        if (condition.operandType === "Reference") {
+          if (operation === "query") {
+            return unsupported(
+              `comparing the reference field '${fieldSide.field.id}' is supported by 'search'; how N/query filters a select field by id has not been decided, so 'query' does not lower it yet`,
+            );
+          }
+          const operand = referenceOperand(valueSide);
+          if (!operand) {
+            return unsupported(
+              `a reference in a condition is written ${fieldSide.field.refTarget ?? "Record"}(id) with a literal or local id, or is a reference local`,
+              valueSide.span,
+            );
+          }
+          if (!isEqualityOperation(condition.operation)) throw new Error("ordering on references is rejected by the binder");
+          const target = isReferenceType(fieldSide.type) ? fieldSide.type.record : undefined;
+          if (!target) throw new Error("a reference comparison has a reference-typed field");
+          return { kind: "CompareReference", field: fieldSide.field, join, record: target, operation: condition.operation, values: [operand] };
         }
         const value = queryValue(valueSide);
         if (!value) return unsupported("a field can only be compared with a literal or a local value", valueSide.span);
         // Flip the operation when the field is on the right: `"" != email` is `email != ""`; `1 < total` is `total > 1`.
-        const operation = fieldOnLeft ? condition.operation : FLIPPED[condition.operation];
-        return { kind: "Compare", field: fieldSide.field, operation, value };
+        const flipped = fieldOnLeft ? condition.operation : FLIPPED[condition.operation];
+        return { kind: "Compare", field: fieldSide.field, join, operation: flipped, value };
       }
       default:
         return unsupported(`a ${operation} condition compares fields of the ${operation === "query" ? "queried" : "searched"} record with values`);
@@ -1475,6 +2232,18 @@ class Binder {
     if (queryRecord) {
       const field = queryRecord.fields.get(name);
       const local = scope.lookup(name);
+      const resultName = scope.resultNames?.get(name);
+      if (resultName) {
+        // `where total > 1` with `total = sum(amount)`: a result name in a source position. Whether or not a field shares the name, the author must mean one thing.
+        this.diagnostics.error(
+          DiagnosticCode.ResultName,
+          field
+            ? `'${name}' is both a field of ${queryRecord.name} and a result name of this search (line ${resultName.start.line}); in 'where', 'group by', and an aggregate a bare name is the source field. Rename the result to make this unambiguous`
+            : `'${name}' is a result name of this search's 'select' (line ${resultName.start.line}), not a field of ${queryRecord.name}: 'where' filters source rows before they are aggregated, and 'group by' and aggregates read source fields. There is no 'having' yet`,
+          span,
+        );
+        return undefined;
+      }
       if (field && local) {
         this.diagnostics.error(
           DiagnosticCode.AmbiguousQueryName,
@@ -1484,7 +2253,9 @@ class Binder {
         return undefined;
       }
       if (field) {
-        return { kind: "value", type: field.type, bound: { kind: "QueryField", record: queryRecord, field, type: field.type, span } };
+        // A select field is a reference here as on a row of the same backend, so it compares with references.
+        const type = this.valueType(field, scope.querySource ?? "query");
+        return { kind: "value", type, bound: { kind: "QueryField", record: queryRecord, field, type, span } };
       }
     }
 
@@ -1492,7 +2263,8 @@ class Binder {
     switch (resolved?.kind) {
       case "local": {
         const { local } = resolved;
-        return { kind: "value", type: local.type, bound: { kind: "LocalReference", local, type: local.type, span } };
+        const type = scope.typeOf(local);
+        return { kind: "value", type, bound: { kind: "LocalReference", local, type, span } };
       }
       case "function":
         return { kind: "function", function: resolved.function, span };
@@ -1553,8 +2325,52 @@ class Binder {
           );
           return undefined;
         }
-        if (isReferenceType(object.type)) return this.denoteReferenceMember(object.type, object.bound, expression);
+        if (object.type === "Error") {
+          if (name === "name" || name === "message") {
+            return {
+              kind: "value",
+              type: "Text",
+              bound: { kind: "ErrorPropertyRead", receiver: object.bound, property: name, nameSpan: expression.property.span, type: "Text", span: expression.span },
+            };
+          }
+          this.diagnostics.error(
+            DiagnosticCode.MemberOnNonRecord,
+            `An Error has '.name' and '.message' (both strings) and can be logged as it is; it has no member '${name}'`,
+            expression.property.span,
+          );
+          return undefined;
+        }
+        if (isOptionalType(object.type)) {
+          const subject = sourceOf(expression.object);
+          this.diagnostics.error(
+            DiagnosticCode.OptionalAccess,
+            `'${subject}' may be absent: a search with 'first' returns one ${typeName(object.type.element)} row or none. ` +
+              `Resolve it where it is declared, 'let ${subject} = ... or return' (or 'or { ... return }'), or test for presence with 'if ${subject} { ... }' before reading '.${name}'`,
+            expression.property.span,
+          );
+          return undefined;
+        }
+        if (isReferenceType(object.type)) {
+          const joined = this.denoteJoinedMember(object.type, object.bound, expression, scope);
+          if (joined !== "notJoined") return joined;
+          return this.denoteReferenceMember(object.type, object.bound, expression);
+        }
         if (isProjectionType(object.type)) return this.denoteProjectionMember(object.type, object.bound, expression);
+        if (object.type === "Ref") {
+          const field = object.bound.kind === "FieldRead" || object.bound.kind === "QueryField" || object.bound.kind === "JoinedFieldRead" || object.bound.kind === "JoinedQueryField" ? object.bound.field : undefined;
+          this.diagnostics.error(
+            field?.selection === "multiple" ? DiagnosticCode.UnsupportedJoin : DiagnosticCode.MemberOnNonRecord,
+            field?.selection === "multiple"
+              ? `'${field.id}' is a multiselect: it holds several references, so '${field.id}.${name}' is not one relationship to follow. Iterating or filtering a multiselect is not supported yet`
+              : field
+                ? `Cannot access '.${name}' on '${field.id}': the schema does not name the record type it refers to, so Mynt cannot determine which fields it has. A reference with a known target has '.id' (and '.text' from a lookup or search row)`
+                : `Cannot access '.${name}' on this reference: the schema does not name the record type it refers to, or it is a multiselect read outside a lookup. ` +
+                  `A reference with a known target has '.id' (and '.text' from a lookup or search row)`,
+            expression.property.span,
+          );
+          return undefined;
+        }
+        if (isSummaryType(object.type)) return this.denoteSummaryMember(object.type, object.bound, expression);
         if (!isRecordType(object.type)) {
           this.diagnostics.error(
             DiagnosticCode.MemberOnNonRecord,
@@ -1574,7 +2390,19 @@ class Binder {
           };
         }
         const field = record.fields.get(name);
-        if (!field) {
+        if (field && !exposesRelationship(object.type, name)) {
+          this.reportNotSelected(object.type, name, expression.property.span);
+          return undefined;
+        }
+        if (field) {
+          const type = this.valueType(field, isRowOrigin(object.type.origin) ? object.type.origin : "record");
+          return {
+            kind: "value",
+            type,
+            bound: { kind: "FieldRead", receiver: object.bound, field, fieldSpan: expression.property.span, type, span: expression.span },
+          };
+        }
+        {
           const sublist = record.sublists.get(name);
           if (sublist && isRowOrigin(object.type.origin)) {
             this.diagnostics.error(
@@ -1596,11 +2424,6 @@ class Binder {
           this.reportUnknownField(record, expression.property, isRowOrigin(object.type.origin));
           return undefined;
         }
-        return {
-          kind: "value",
-          type: field.type,
-          bound: { kind: "FieldRead", receiver: object.bound, field, fieldSpan: expression.property.span, type: field.type, span: expression.span },
-        };
       }
 
       case "namespace": {
@@ -1714,9 +2537,164 @@ class Binder {
     return { kind: "value", type, bound: reference };
   }
 
-  /** `ref.id` is the reference's identity; any other member needs a projection or a load. */
+  /** The Mynt type of a field read from `source`: scalars as declared, select fields as references when the schema names a target. */
+  private valueType(field: FieldSchema, source: FieldSource): MyntType {
+    return fieldValueType(field, source, (name) => this.schema.getRecordByName(name));
+  }
+
+  /**
+   * `order.entity.email` on a search row, or `entity.email` in a search
+   * condition: a field of the referenced record, reached through the one
+   * join hop the schema proves (`refTarget`, a single select). It is an
+   * ordinary member access on a reference everywhere else, which the
+   * caller then handles (`id`, `text`, or an error that names the lookup
+   * form), so the same syntax never implies hidden I/O: here the value is
+   * a planned joined column of the same search. Returns "notJoined" when
+   * the member is `id`/`text` or the receiver is not a search relationship.
+   */
+  private denoteJoinedMember(type: ReferenceType, receiver: BoundExpression, expression: MemberExpression, scope: Scope): Denotation | undefined | "notJoined" {
+    const name = expression.property.name;
+    if (name === "id" || name === "text") return "notJoined";
+    // A relationship rooted at a search row's field, or at a bare field in a search condition.
+    const rowField = receiver.kind === "FieldRead" && isRowLike(receiver.receiver.type) ? receiver : undefined;
+    const conditionField = receiver.kind === "QueryField" && scope.querySource ? receiver : undefined;
+    const deeper = receiver.kind === "JoinedFieldRead" || receiver.kind === "JoinedQueryField" ? receiver : undefined;
+    if (!rowField && !conditionField && !deeper) return "notJoined";
+    const backend = rowField ? (isSummaryType(rowField.receiver.type) ? "search" : (rowField.receiver.type as RecordType).origin) : conditionField ? scope.querySource : "search";
+    const subject = sourceOf(expression.object);
+    if (backend === "query") {
+      this.diagnostics.error(
+        DiagnosticCode.UnsupportedJoin,
+        `'${subject}.${name}' follows a relationship, which 'search' plans as a join; N/query's join model is not supported yet, so use 'search' or look the field up with '${subject}[${name}]'`,
+        expression.property.span,
+      );
+      return undefined;
+    }
+    if (deeper) {
+      this.diagnostics.error(
+        DiagnosticCode.UnsupportedJoin,
+        `'${subject}.${name}' is a second join hop (${deeper.join.via.id} to ${deeper.join.target.name}, then ${deeper.field.id} to ${type.record.name}); joins are one hop deep for now. ` +
+          `Look the field up explicitly instead: '${subject}[${name}]'`,
+        expression.property.span,
+      );
+      return undefined;
+    }
+    const via = rowField ? rowField.field : conditionField!.field;
+    const target = type.record;
+    const field = target.fields.get(name);
+    if (!field) {
+      this.reportUnknownMember(`${target.name} (through ${via.id})`, target.fields.keys(), expression.property);
+      return undefined;
+    }
+    if (rowField && isSummaryType(rowField.receiver.type)) {
+      // On a summary row only a grouped joined field exists, with the type its grouping gave it.
+      const grouped = summaryJoinedField(rowField.receiver.type, via.id, name);
+      if (!grouped) {
+        this.reportNotInSummary(rowField.receiver.type, `${via.id}.${name}`, expression.property.span);
+        return undefined;
+      }
+      const read: JoinedFieldRead = { kind: "JoinedFieldRead", receiver: rowField, join: { via, target }, field, fieldSpan: expression.property.span, type: grouped.type, span: expression.span };
+      return { kind: "value", type: grouped.type, bound: read };
+    }
+    if (rowField && !exposesJoinedField(rowField.receiver.type as RecordType, via.id, name)) {
+      this.reportNotSelected(rowField.receiver.type as RecordType, `${via.id}.${name}`, expression.property.span);
+      return undefined;
+    }
+    const join: JoinStep = { via, target };
+    const valueType = this.valueType(field, "search");
+    if (rowField) {
+      const read: JoinedFieldRead = { kind: "JoinedFieldRead", receiver: rowField, join, field, fieldSpan: expression.property.span, type: valueType, span: expression.span };
+      return { kind: "value", type: valueType, bound: read };
+    }
+    const condition: JoinedQueryField = { kind: "JoinedQueryField", base: conditionField!, join, field, fieldSpan: expression.property.span, type: valueType, span: expression.span };
+    return { kind: "value", type: valueType, bound: condition };
+  }
+
+  /**
+   * A member of a summary row: an aggregate by its alias, a grouped field by
+   * its name (a joined one through its relationship, as on an ordinary row),
+   * and nothing else. A bucket is not a record, so there is no `id`.
+   */
+  private denoteSummaryMember(type: SummaryType, receiver: BoundExpression, expression: MemberExpression): Denotation | undefined {
+    const name = expression.property.name;
+    const aggregate = summaryAggregate(type, name);
+    if (aggregate) {
+      return {
+        kind: "value",
+        type: aggregate.type,
+        bound: { kind: "ResultFieldRead", receiver, result: aggregate, nameSpan: expression.property.span, type: aggregate.type, span: expression.span },
+      };
+    }
+    const grouped = summaryField(type, name);
+    if (grouped) {
+      return {
+        kind: "value",
+        type: grouped.type,
+        bound: { kind: "FieldRead", receiver, field: grouped.field!, fieldSpan: expression.property.span, type: grouped.type, span: expression.span },
+      };
+    }
+    const field = type.record.fields.get(name);
+    if (field && summaryExposesRelationship(type, name)) {
+      // `row.entity` when only `entity.email` is grouped: the relationship, followed to its grouped fields; its own id and text are not fetched.
+      const valueType = this.valueType(field, "search");
+      return {
+        kind: "value",
+        type: valueType,
+        bound: { kind: "FieldRead", receiver, field, fieldSpan: expression.property.span, type: valueType, span: expression.span },
+      };
+    }
+    if (name === "id") {
+      this.diagnostics.error(
+        DiagnosticCode.MemberOnNonRecord,
+        `A summary row is an aggregate bucket, not a ${type.record.name} record, so it has no 'id'. It exposes ${summaryResultNames(type).join(", ")}` +
+          (type.fields.some((f) => f.summary === "group" && f.type && typeof f.type === "object" && f.type.kind === "Reference") ? `; a grouped select field carries the id of what it refers to, like 'row.${type.fields.find((f) => f.summary === "group" && typeof f.type === "object" && f.type.kind === "Reference")!.field!.id}.id'` : ""),
+        expression.property.span,
+      );
+      return undefined;
+    }
+    this.reportNotInSummary(type, name, expression.property.span, field !== undefined);
+    return undefined;
+  }
+
+  /** A member read from a summary row that is neither grouped nor an aggregate name. */
+  private reportNotInSummary(row: SummaryType, what: string, span: Span, isField = true): void {
+    const names = summaryResultNames(row);
+    const hint = isField ? undefined : suggest(what, summaryMemberNames(row));
+    this.diagnostics.error(
+      DiagnosticCode.FieldNotProjected,
+      isField
+        ? `'${what}' is not part of this summary: a summary row of ${row.record.name} exposes only its grouped fields and aggregates, ${names.join(", ")}. Group by '${what}' or aggregate it in 'select'`
+        : `A summary row of ${row.record.name} has no member '${what}'; it exposes ${names.join(", ")}` + (hint ? `. Did you mean '${hint}'?` : ""),
+      span,
+    );
+  }
+
+  /** A field read from a projected search row that its `select` does not expose. */
+  private reportNotSelected(row: RecordType, what: string, span: Span): void {
+    const selected = (row.exposes ?? []).map((e) => (e.join ? `${e.join.via.id}.${e.field.id}` : e.field.id));
+    this.diagnostics.error(
+      DiagnosticCode.FieldNotProjected,
+      `'${what}' was not selected: this ${row.record.name} search selects ${selected.join(", ")}. Add it to the 'select' clause, '${[...selected, what].join(", ")}'`,
+      span,
+    );
+  }
+
+  /**
+   * `ref.id` is the reference's identity; `ref.text` is display text, which
+   * only a value that carries it has (never fetched on demand); any other
+   * member needs a projection or a load.
+   */
   private denoteReferenceMember(type: ReferenceType, receiver: BoundExpression, expression: MemberExpression): Denotation | undefined {
     const name = expression.property.name;
+    // On a projected row, the reference's own id and text come with the reference column, which must itself be selected (grouped, on a summary row).
+    if ((name === "id" || name === "text") && receiver.kind === "FieldRead" && isRowRecord(receiver.receiver.type) && !exposesField(receiver.receiver.type, receiver.field.id)) {
+      this.reportNotSelected(receiver.receiver.type, receiver.field.id, expression.property.span);
+      return undefined;
+    }
+    if ((name === "id" || name === "text") && receiver.kind === "FieldRead" && isSummaryType(receiver.receiver.type) && !summaryField(receiver.receiver.type, receiver.field.id)) {
+      this.reportNotInSummary(receiver.receiver.type, receiver.field.id, expression.property.span);
+      return undefined;
+    }
     if (name === "id") {
       return {
         kind: "value",
@@ -1725,14 +2703,31 @@ class Binder {
       };
     }
     const record = type.record;
-    const field = record.fields.get(name);
     const subject = sourceOf(expression.object);
+    if (name === "text") {
+      if (type.text) {
+        return {
+          kind: "value",
+          type: "Text",
+          bound: { kind: "ReferenceTextRead", receiver, nameSpan: expression.property.span, type: "Text", span: expression.span },
+        };
+      }
+      this.diagnostics.error(
+        DiagnosticCode.ReferenceWithoutText,
+        `A ${record.name} reference has an id but no display text: '${subject}' identifies the record without fetching anything. ` +
+          `Display text comes with a select field read through a lookup or a search row; ` +
+          `to show a name, look it up explicitly, like '${subject}[${[...record.fields.keys()][0] ?? "name"}]'`,
+        expression.property.span,
+      );
+      return undefined;
+    }
+    const field = record.fields.get(name);
     this.diagnostics.error(
       DiagnosticCode.MemberOnNonRecord,
       field
         ? `'${subject}' is a ${typeName(type)}: a reference to the record, not the record itself. ` +
           `Look the field up without loading, '${subject}[${name}]', or load the record, 'let x = load ${record.name}(${subject}.id)', then 'x.${name}'`
-        : `${typeName(type)} has no member '${name}'; a reference has only '.id'` +
+        : `${typeName(type)} has no member '${name}'; a reference has '.id'${type.text ? " and '.text'" : ""}` +
           (suggest(name, [...record.fields.keys()]) ? `. Did you mean '${suggest(name, [...record.fields.keys()])}', looked up as '${subject}[${suggest(name, [...record.fields.keys()])}]'?` : ""),
       expression.property.span,
     );
@@ -1742,24 +2737,24 @@ class Binder {
   /** `info.email` on a projection: only the projected fields exist. */
   private denoteProjectionMember(type: ProjectionType, receiver: BoundExpression, expression: MemberExpression): Denotation | undefined {
     const name = expression.property.name;
-    const field = type.fields.find((f) => f.id === name);
-    if (field) {
+    const projected = type.fields.find((f) => f.field.id === name);
+    if (projected) {
       return {
         kind: "value",
-        type: field.type,
-        bound: { kind: "FieldRead", receiver, field, fieldSpan: expression.property.span, type: field.type, span: expression.span },
+        type: projected.type,
+        bound: { kind: "FieldRead", receiver, field: projected.field, fieldSpan: expression.property.span, type: projected.type, span: expression.span },
       };
     }
-    const projected = type.fields.map((f) => f.id);
+    const projectedNames = type.fields.map((f) => f.field.id);
     const subject = sourceOf(expression.object);
     const known = type.record.fields.get(name);
-    const hint = suggest(name, projected);
+    const hint = suggest(name, projectedNames);
     this.diagnostics.error(
       DiagnosticCode.FieldNotProjected,
       known
-        ? `'${name}' was not projected: '${subject}' holds only ${projected.join(", ")} of ${type.record.name}. ` +
-          `Add it where the projection is made, '[${[...projected, name].join(", ")}]'`
-        : `${type.record.name} has no field '${name}'` + (hint ? `. Did you mean '${hint}'?` : `; '${subject}' holds ${projected.join(", ")}`),
+        ? `'${name}' was not projected: '${subject}' holds only ${projectedNames.join(", ")} of ${type.record.name}. ` +
+          `Add it where the projection is made, '[${[...projectedNames, name].join(", ")}]'`
+        : `${type.record.name} has no field '${name}'` + (hint ? `. Did you mean '${hint}'?` : `; '${subject}' holds ${projectedNames.join(", ")}`),
       expression.property.span,
     );
     return undefined;
@@ -1789,12 +2784,15 @@ class Binder {
 
     let record: RecordSchema;
     let source: LookupSource;
+    let valueSource: FieldSource;
     if (isReferenceType(receiver.type)) {
       record = receiver.type.record;
       source = "lookupFields";
+      valueSource = "lookup";
     } else if (isRecordType(receiver.type)) {
       record = receiver.type.record;
       source = isRowOrigin(receiver.type.origin) ? "row" : "record";
+      valueSource = isRowOrigin(receiver.type.origin) ? receiver.type.origin : "record";
     } else {
       const message = isProjectionType(receiver.type)
         ? `'${subject}' is already a projection (${typeName(receiver.type)}); name every field you need in the one '[...]' that makes it`
@@ -1826,13 +2824,13 @@ class Binder {
         continue;
       }
       seen.set(field.id, identifier.span);
-      fields.push({ kind: "LookupField", field, span: identifier.span });
+      fields.push({ kind: "LookupField", field, type: this.valueType(field, valueSource), span: identifier.span });
     }
     // An empty list is a syntax error the parser already reported.
     if (!ok || fields.length === 0) return undefined;
 
     if (source === "lookupFields") this.dependencies.add("N/search");
-    const type = fields.length === 1 ? fields[0]!.field.type : projectionType(record, fields.map((f) => f.field));
+    const type = fields.length === 1 ? fields[0]!.type : projectionType(record, fields.map((f) => ({ field: f.field, type: f.type })));
     const lookup: Lookup = { kind: "Lookup", receiver: receiver.bound, record, fields, source, type, span: expression.span };
     return { kind: "value", type, bound: lookup };
   }

@@ -1,4 +1,4 @@
-import type { FieldSchema, RecordSchema, SchemaDocument, SchemaDocumentField, SublistSchema } from "./types.js";
+import type { FieldSchema, RecordSchema, SavedSearchSchema, SchemaDocument, SchemaDocumentField, SublistSchema } from "./types.js";
 
 /**
  * The only schema interface the compiler sees. Where the data comes from
@@ -9,6 +9,10 @@ export interface SchemaProvider {
   getRecordByName(name: string): RecordSchema | undefined;
   /** All known record types, for diagnostics and future completion. */
   listRecords(): readonly RecordSchema[];
+  /** A saved search the account snapshot knows, by script id. */
+  getSavedSearch(id: string): SavedSearchSchema | undefined;
+  /** Every saved search the snapshot knows, for completion. */
+  listSavedSearches(): readonly SavedSearchSchema[];
 }
 
 function toFields(fields: Record<string, SchemaDocumentField>): Map<string, FieldSchema> {
@@ -21,6 +25,8 @@ function toFields(fields: Record<string, SchemaDocumentField>): Map<string, Fiel
       writable: field.writable,
       custom: field.custom ?? false,
       ...(field.refTarget !== undefined ? { refTarget: field.refTarget } : {}),
+      ...(field.selection !== undefined ? { selection: field.selection } : {}),
+      ...(field.searchJoin !== undefined ? { searchJoin: field.searchJoin } : {}),
       ...(field.required !== undefined ? { required: field.required } : {}),
       ...(field.values !== undefined ? { values: field.values } : {}),
     });
@@ -31,8 +37,12 @@ function toFields(fields: Record<string, SchemaDocumentField>): Map<string, Fiel
 /** A SchemaProvider backed by an in-memory SchemaDocument. */
 export class DocumentSchemaProvider implements SchemaProvider {
   private readonly byName = new Map<string, RecordSchema>();
+  private readonly savedSearches = new Map<string, SavedSearchSchema>();
 
   constructor(document: SchemaDocument) {
+    for (const [id, saved] of Object.entries(document.savedSearches ?? {})) {
+      this.savedSearches.set(id, { id, record: saved.record, ...(saved.searchType !== undefined ? { searchType: saved.searchType } : {}) });
+    }
     for (const [recordId, record] of Object.entries(document.records)) {
       const sublists = new Map<string, SublistSchema>();
       for (const [sublistId, sublist] of Object.entries(record.sublists ?? {})) {
@@ -42,6 +52,7 @@ export class DocumentSchemaProvider implements SchemaProvider {
         id: recordId,
         name: record.name,
         suiteScriptType: record.suiteScriptType,
+        searchFamily: record.searchFamily,
         custom: record.custom ?? false,
         fields: toFields(record.fields),
         sublists,
@@ -55,5 +66,13 @@ export class DocumentSchemaProvider implements SchemaProvider {
 
   listRecords(): readonly RecordSchema[] {
     return [...this.byName.values()];
+  }
+
+  getSavedSearch(id: string): SavedSearchSchema | undefined {
+    return this.savedSearches.get(id);
+  }
+
+  listSavedSearches(): readonly SavedSearchSchema[] {
+    return [...this.savedSearches.values()];
   }
 }

@@ -16,6 +16,7 @@
  *   number field <  5       lessthan 5       number field <= 5       lessthanorequalto 5
  *   number field >  5       greaterthan 5    number field >= 5       greaterthanorequalto 5
  *   boolean field           is "T"           !booleanField           is "F"
+ *   select field == Ref     anyof [id]       select field != Ref     noneof [id]
  *   a && b                  [a, "and", b]    a || b                  [a, "or", b]
  *
  * `!` has no leaf of its own: it is pushed down to the operand, where it
@@ -25,12 +26,18 @@
  * comparison: `!(total < 5)` is not `total >= 5` when `total` is empty,
  * so it is rejected and the author writes the comparison they mean.
  *
+ * A select field compares with references by identity, through `anyof`
+ * and `noneof`, which take a list of internal ids; `is` is a text operator
+ * and is not used for select fields. That `noneof` matches records whose
+ * field is empty, as the complement of `anyof`, is taken from NetSuite's
+ * documentation and not yet verified live, like `isnot` for strings.
+ *
  * What is deliberately not here: joins, summaries, formulas, saved
  * searches, and text operators such as `contains`. Each needs its own
  * syntax before it needs a lowering.
  */
-import type { ComparisonOperation, QueryPredicate, QueryValue } from "./bound.js";
-import type { FieldSchema } from "../schema/types.js";
+import { assertsEqual, isEqualityOperation, type ComparisonOperation, type EqualityOperation, type JoinStep, type QueryPredicate, type QueryValue, type ReferenceOperand } from "./bound.js";
+import type { FieldSchema, RecordSchema } from "../schema/types.js";
 
 /** The `search.Operator` members Mynt emits, by their enum name. */
 export type SearchOperator =
@@ -51,22 +58,30 @@ export type SearchOperator =
  * node, by design (see above).
  */
 export type SearchPredicate =
-  | { kind: "Filter"; field: FieldSchema; operator: SearchOperator; value: QueryValue | undefined }
+  /** `origin` is the Mynt comparison the leaf came from (after `!` push-down), kept although loose and strict map to one operator here. */
+  | { kind: "Filter"; field: FieldSchema; join: JoinStep | undefined; operator: SearchOperator; value: QueryValue | undefined; origin: ComparisonOperation | undefined }
+  /** A select field against reference ids: `[field, anyof | noneof, [ids]]`. Loose and strict both mean identity, so both lower here. */
+  | { kind: "ReferenceFilter"; field: FieldSchema; join: JoinStep | undefined; record: RecordSchema; operator: "ANYOF" | "NONEOF"; values: ReferenceOperand[]; origin: EqualityOperation }
   | { kind: "And"; left: SearchPredicate; right: SearchPredicate }
   | { kind: "Or"; left: SearchPredicate; right: SearchPredicate };
 
 const NUMBER_OPERATORS: Record<ComparisonOperation, SearchOperator> = {
   Equal: "EQUALTO",
   NotEqual: "NOTEQUALTO",
+  StrictEqual: "EQUALTO",
+  StrictNotEqual: "NOTEQUALTO",
   Less: "LESSTHAN",
   LessOrEqual: "LESSTHANOREQUALTO",
   Greater: "GREATERTHAN",
   GreaterOrEqual: "GREATERTHANOREQUALTO",
 };
 
+/** `!` pushed into a comparison keeps its mode: a negated loose equality is a loose inequality, a negated strict one a strict inequality. */
 const NEGATED: Record<ComparisonOperation, ComparisonOperation | undefined> = {
   Equal: "NotEqual",
   NotEqual: "Equal",
+  StrictEqual: "StrictNotEqual",
+  StrictNotEqual: "StrictEqual",
   Less: undefined,
   LessOrEqual: undefined,
   Greater: undefined,
@@ -95,7 +110,19 @@ export function toSearchPredicate(predicate: QueryPredicate, reject: (why: strin
       return { kind, left, right };
     }
     case "Flag":
-      return { kind: "Filter", field: predicate.field, operator: "IS", value: { kind: "Constant", value: predicate.value !== negated ? "T" : "F" } };
+      return { kind: "Filter", field: predicate.field, join: predicate.join, operator: "IS", value: { kind: "Constant", value: predicate.value !== negated ? "T" : "F" }, origin: undefined };
+    case "CompareReference": {
+      const origin = negated ? (NEGATED[predicate.operation] as EqualityOperation) : predicate.operation;
+      return {
+        kind: "ReferenceFilter",
+        field: predicate.field,
+        join: predicate.join,
+        record: predicate.record,
+        operator: assertsEqual(origin) ? "ANYOF" : "NONEOF",
+        values: predicate.values,
+        origin,
+      };
+    }
     case "Compare": {
       let { operation } = predicate;
       if (negated) {
@@ -109,15 +136,16 @@ export function toSearchPredicate(predicate: QueryPredicate, reject: (why: strin
         }
         operation = flipped;
       }
-      const { field, value } = predicate;
+      const { field, join, value } = predicate;
       if (field.type === "Number") {
-        return { kind: "Filter", field, operator: NUMBER_OPERATORS[operation], value };
+        return { kind: "Filter", field, join, operator: NUMBER_OPERATORS[operation], value, origin: operation };
       }
-      if (isOrdering(operation)) throw new Error(`ordering on ${field.type} should have been rejected by the binder`);
+      if (!isEqualityOperation(operation)) throw new Error(`ordering on ${field.type} should have been rejected by the binder`);
+      // Same-type loose and strict equality are one thing on a string field; the origin records which was written.
       if (value.kind === "Constant" && value.value === "") {
-        return { kind: "Filter", field, operator: operation === "Equal" ? "ISEMPTY" : "ISNOTEMPTY", value: undefined };
+        return { kind: "Filter", field, join, operator: assertsEqual(operation) ? "ISEMPTY" : "ISNOTEMPTY", value: undefined, origin: operation };
       }
-      return { kind: "Filter", field, operator: operation === "Equal" ? "IS" : "ISNOT", value };
+      return { kind: "Filter", field, join, operator: assertsEqual(operation) ? "IS" : "ISNOT", value, origin: operation };
     }
   }
 }

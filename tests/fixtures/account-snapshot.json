@@ -1,0 +1,328 @@
+{
+  "myntSchemaVersion": 1,
+  "records": {
+    "customer": {
+      "fields": {
+        "category": {
+          "label": "Category",
+          "refTarget": "CustomerCategory",
+          "selection": "multiple",
+          "type": "Ref",
+          "writable": true
+        },
+        "comments": {
+          "label": "Comments",
+          "type": "Text",
+          "writable": true
+        },
+        "email": {
+          "label": "Email",
+          "type": "Text",
+          "writable": true
+        },
+        "entityid": {
+          "label": "ID",
+          "type": "Text",
+          "writable": false
+        },
+        "parent": {
+          "label": "Parent Company",
+          "selection": "single",
+          "type": "Ref",
+          "writable": true
+        },
+        "subsidiary": {
+          "label": "Subsidiary",
+          "refTarget": "Subsidiary",
+          "selection": "single",
+          "type": "Ref",
+          "writable": true
+        }
+      },
+      "name": "Customer",
+      "suiteScriptType": "CUSTOMER"
+    },
+    "customercategory": {
+      "fields": {
+        "name": {
+          "label": "Name",
+          "type": "Text",
+          "writable": true
+        }
+      },
+      "name": "CustomerCategory",
+      "suiteScriptType": "CUSTOMER_CATEGORY"
+    },
+    "customrecord_field_mapping": {
+      "custom": true,
+      "fields": {
+        "defaultvalue": {
+          "label": "Default Value",
+          "type": "Text",
+          "writable": true
+        },
+        "externalfieldid": {
+          "label": "External Field Id",
+          "type": "Text",
+          "writable": true
+        },
+        "inclusion": {
+          "label": "Include",
+          "type": "Bool",
+          "writable": true
+        },
+        "netsuiteconnectorfield": {
+          "label": "Connector Field",
+          "refTarget": "Customer",
+          "selection": "single",
+          "type": "Ref",
+          "writable": true
+        },
+        "netsuitefieldid": {
+          "label": "NetSuite Field Id",
+          "type": "Text",
+          "writable": true
+        },
+        "netsuitefieldrectype": {
+          "label": "NetSuite Field Record Type",
+          "selection": "single",
+          "type": "Ref",
+          "writable": true
+        },
+        "netsuitefieldtype": {
+          "label": "NetSuite Field Type",
+          "type": "Text",
+          "values": [
+            "text",
+            "select",
+            "checkbox",
+            "date"
+          ],
+          "writable": true
+        },
+        "searchfield": {
+          "label": "Search Field",
+          "type": "Text",
+          "writable": true
+        },
+        "searchgetmethod": {
+          "label": "Search Get Method",
+          "type": "Text",
+          "values": [
+            "getValue",
+            "getText"
+          ],
+          "writable": true
+        },
+        "searchjoin": {
+          "label": "Search Join",
+          "type": "Text",
+          "writable": true
+        },
+        "sortorder": {
+          "label": "Sort Order",
+          "type": "Number",
+          "writable": true
+        },
+        "suiteql": {
+          "label": "SuiteQL",
+          "type": "Text",
+          "writable": true
+        },
+        "type": {
+          "label": "Type",
+          "type": "Text",
+          "values": [
+            "body",
+            "line",
+            "sublist"
+          ],
+          "writable": true
+        }
+      },
+      "name": "FieldMapping"
+    },
+    "customrecord_mynt_log": {
+      "custom": true,
+      "fields": {
+        "custrecord_mynt_done": {
+          "custom": true,
+          "label": "Done",
+          "type": "Bool",
+          "writable": true
+        },
+        "custrecord_mynt_message": {
+          "custom": true,
+          "label": "Message",
+          "type": "Text",
+          "writable": true
+        },
+        "name": {
+          "label": "Name",
+          "type": "Text",
+          "writable": true
+        }
+      },
+      "name": "MyntLog"
+    },
+    "invoice": {
+      "fields": {
+        "memo": {
+          "label": "Memo",
+          "type": "Text",
+          "writable": true
+        },
+        "total": {
+          "label": "Total",
+          "type": "Number",
+          "writable": false
+        },
+        "tranid": {
+          "label": "Invoice #",
+          "type": "Text",
+          "writable": true
+        }
+      },
+      "name": "Invoice",
+      "searchFamily": "transaction",
+      "sublists": {
+        "item": {
+          "fields": {
+            "amount": {
+              "label": "Amount",
+              "type": "Number",
+              "writable": false
+            },
+            "description": {
+              "label": "Description",
+              "type": "Text",
+              "writable": true
+            },
+            "item": {
+              "label": "Item",
+              "type": "Text",
+              "writable": true
+            },
+            "quantity": {
+              "label": "Quantity",
+              "type": "Number",
+              "writable": true
+            },
+            "rate": {
+              "label": "Rate",
+              "type": "Number",
+              "writable": true
+            }
+          },
+          "label": "Items"
+        }
+      },
+      "suiteScriptType": "INVOICE"
+    },
+    "salesorder": {
+      "fields": {
+        "entity": {
+          "label": "Customer",
+          "refTarget": "Customer",
+          "selection": "single",
+          "type": "Ref",
+          "writable": true
+        },
+        "memo": {
+          "label": "Memo",
+          "type": "Text",
+          "writable": true
+        },
+        "total": {
+          "label": "Total",
+          "type": "Number",
+          "writable": false
+        }
+      },
+      "name": "SalesOrder",
+      "searchFamily": "transaction",
+      "sublists": {
+        "item": {
+          "fields": {
+            "amount": {
+              "label": "Amount",
+              "type": "Number",
+              "writable": false
+            },
+            "description": {
+              "label": "Description",
+              "type": "Text",
+              "writable": true
+            },
+            "item": {
+              "label": "Item",
+              "type": "Text",
+              "writable": true
+            },
+            "quantity": {
+              "label": "Quantity",
+              "type": "Number",
+              "writable": true
+            },
+            "rate": {
+              "label": "Rate",
+              "type": "Number",
+              "writable": true
+            }
+          },
+          "label": "Items"
+        }
+      },
+      "suiteScriptType": "SALES_ORDER"
+    },
+    "subsidiary": {
+      "fields": {
+        "country": {
+          "label": "Country",
+          "type": "Text",
+          "writable": true
+        },
+        "name": {
+          "label": "Name",
+          "type": "Text",
+          "writable": true
+        }
+      },
+      "name": "Subsidiary",
+      "suiteScriptType": "SUBSIDIARY"
+    },
+    "systemnote": {
+      "fields": {
+        "field": {
+          "label": "Field",
+          "type": "Text",
+          "writable": false
+        },
+        "newvalue": {
+          "label": "New Value",
+          "type": "Text",
+          "writable": false
+        }
+      },
+      "name": "SystemNote"
+    }
+  },
+  "savedSearches": {
+    "customsearch_active_customers": {
+      "record": "Customer"
+    },
+    "customsearch_customers": {
+      "record": "Customer"
+    },
+    "customsearch_open_orders": {
+      "record": "SalesOrder"
+    },
+    "customsearch_system_notes": {
+      "record": "SystemNote",
+      "searchType": "systemnote"
+    }
+  },
+  "source": {
+    "kind": "builtin"
+  }
+}

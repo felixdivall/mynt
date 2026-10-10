@@ -77,6 +77,7 @@ export interface Block {
 }
 
 export type Statement =
+  | TryStatement
   | LetStatement
   | SaveStatement
   | DeleteStatement
@@ -87,6 +88,50 @@ export type Statement =
   | ReturnStatement
   | AssignmentStatement
   | ExpressionStatement;
+
+/**
+ *   try { ... } catch err { ... } finally { ... }
+ *
+ * Recovery from a thrown runtime error, lowered to JavaScript's own
+ * try/catch. `catch` (with or without a binding) and `finally` follow the
+ * closing `}` on the same line, like `else`. At least one of them is
+ * required; a bare `try` is an error. Absence (`T?`) never enters `catch`:
+ * that is `or`'s business.
+ */
+export interface TryStatement {
+  kind: "TryStatement";
+  keywordSpan: Span;
+  body: Block;
+  catchSpan: Span | undefined;
+  /** The error local, or undefined for `catch { ... }`. */
+  binding: Identifier | undefined;
+  handler: Block | undefined;
+  finallySpan: Span | undefined;
+  finalizer: Block | undefined;
+  span: Span;
+}
+
+/**
+ *   let account = search Account first
+ *       or return
+ *   let account = search Account first
+ *       or { log.error("missing"); return }
+ *
+ * Resolution of an optional value at the point it arises: the value if
+ * present, else the branch, which must leave the current control flow, so
+ * the binding is the non-optional type. `or` is contextual (a local may be
+ * named `or`) and belongs to the expression, not to a search: it reads
+ * past one newline so it can follow a search's last clause, and it is
+ * taken only when `return` or `{` follows it. `or return` is a one-return
+ * block. Not boolean or, which stays `||`.
+ */
+export interface OrExpression {
+  kind: "OrExpression";
+  value: Expression;
+  orSpan: Span;
+  branch: Block;
+  span: Span;
+}
 
 /** `return` or `return expression`. `return` always begins a statement. */
 export interface ReturnStatement {
@@ -188,7 +233,7 @@ export interface SaveStatement {
 }
 
 /**
- *   let customer = load Customer("123")
+ *   let customer = load Customer(123)
  *
  * The initializer is mandatory for now; a type annotation slot can be added
  * between the name and `=` later without disturbing this shape.
@@ -215,6 +260,7 @@ export interface ExpressionStatement {
 }
 
 export type Expression =
+  | OrExpression
   | Identifier
   | MemberExpression
   | CallExpression
@@ -251,6 +297,127 @@ export interface ProjectionExpression {
 /** The NetSuite backend a `query`/`search` expression targets. The programmer chooses; the compiler never picks. */
 export type QueryOperation = "query" | "search";
 
+/**
+ * One clause of a search, after its source. Each is contextual syntax:
+ * `where`, `select`, `order by`, `take` begin a clause only there, and a
+ * line that begins with one of them continues the search.
+ *
+ *   where <condition>                   the filter
+ *   select <field>, <field>.<field>     the fields the rows expose (schema fields, one join hop)
+ *   order by <field> [asc|desc], ...    the sort keys (a result name in a summary search)
+ *   group by <field>, ...               the summary buckets; with aggregates in select, a summary search
+ *   limit <count>                       at most this many rows, still a sequence
+ *   first                               one optional row: the first, or none
+ *
+ * `select` items and sort keys are expressions, so an aggregate can be an
+ * item later; today the binder accepts a field or a joined field.
+ */
+export type SearchClause = WhereClause | SelectClause | OrderByClause | GroupByClause | LimitClause | FirstClause;
+
+export interface WhereClause {
+  kind: "WhereClause";
+  keywordSpan: Span;
+  condition: Expression;
+  span: Span;
+}
+
+export interface SelectClause {
+  kind: "SelectClause";
+  keywordSpan: Span;
+  items: SelectItem[];
+  span: Span;
+}
+
+/**
+ * One `select` item: a field (`tranid`, `entity.email`), or a named
+ * aggregate (`total = sum(amount)`). Only an aggregate takes a name, which
+ * becomes the result field; a plain field is exposed under its own name.
+ * The parser keeps a name on a field, or an unnamed aggregate, so the
+ * binder can report it precisely.
+ */
+export interface SelectItem {
+  kind: "SelectItem";
+  /** The result name, for `name = ...`. */
+  alias: Identifier | undefined;
+  equalsSpan: Span | undefined;
+  value: Expression | AggregateCall;
+  span: Span;
+}
+
+/**
+ * `sum(amount)`, `count()`, `max(entity.creditlimit)`: an aggregate over a
+ * source field, written only as a `select` item's value. Not an
+ * expression: the aggregate names are contextual to `select`, so a
+ * function named `sum` is still a function everywhere else.
+ */
+export interface AggregateCall {
+  kind: "AggregateCall";
+  function: Identifier;
+  /** The field aggregated; undefined for `count()`, which counts rows. */
+  argument: Expression | undefined;
+  closeSpan: Span | undefined;
+  span: Span;
+}
+
+/** The aggregate names `select` recognizes before `(`. */
+export const AGGREGATE_FUNCTIONS: readonly string[] = ["sum", "count", "min", "max", "avg"];
+
+/** `group by <field>, ...`: the fields that define the summary buckets. */
+export interface GroupByClause {
+  kind: "GroupByClause";
+  /** `group`. */
+  keywordSpan: Span;
+  /** `by`, or undefined while being typed. */
+  bySpan: Span | undefined;
+  fields: Expression[];
+  span: Span;
+}
+
+export interface OrderByClause {
+  kind: "OrderByClause";
+  /** `order`. */
+  keywordSpan: Span;
+  /** `by`, or undefined while being typed. */
+  bySpan: Span | undefined;
+  keys: SortKey[];
+  span: Span;
+}
+
+export interface SortKey {
+  kind: "SortKey";
+  field: Expression;
+  direction: "asc" | "desc" | undefined;
+  directionSpan: Span | undefined;
+  span: Span;
+}
+
+/** `limit <count>`: at most this many rows; the result stays a sequence, even for `limit 1`. */
+export interface LimitClause {
+  kind: "LimitClause";
+  keywordSpan: Span;
+  /** Undefined while being typed. */
+  count: Expression | undefined;
+  span: Span;
+}
+
+/** `first`: the first row under the effective ordering, or none; the result is one optional row, not a sequence. */
+export interface FirstClause {
+  kind: "FirstClause";
+  keywordSpan: Span;
+  span: Span;
+}
+
+/** The words that begin a search clause. Contextual: identifiers anywhere else. `take` is recognized only to point at `limit`. */
+export const SEARCH_CLAUSE_KEYWORDS: readonly string[] = ["where", "select", "order", "group", "limit", "first", "take"];
+
+/** `saved "customsearch_x"` / `saved Customer "customsearch_x"`: the modifier and the id expression (a string or a name; undefined while being typed). A node, so tooling walks into the id. */
+export interface SavedSearchClause {
+  kind: "SavedSearchClause";
+  keywordSpan: Span;
+  id: Expression | undefined;
+  span: Span;
+}
+
 export const QUERY_OPERATIONS: readonly QueryOperation[] = ["query", "search"];
 
 /**
@@ -259,29 +426,50 @@ export const QUERY_OPERATIONS: readonly QueryOperation[] = ["query", "search"];
  *   search Customer
  *       where email != ""
  *
- * `query`, `search`, and `where` are contextual. Inside the condition, bare
- * names are the record's fields. A `where` may begin the next line. The two
- * operations share one syntax and differ only in backend: `query` lowers to
- * `N/query`, `search` to `N/search`.
+ *   search saved "customsearch_active_customers"
+ *       where email !== ""
+ *   search saved SystemNote "customsearch_system_notes"
+ *
+ * `query`, `search`, `saved`, and `where` are contextual. Inside the
+ * condition, bare names are the record's fields. A `where` may begin the
+ * next line. The two operations share one syntax and differ only in
+ * backend: `query` lowers to `N/query`, `search` to `N/search`.
+ *
+ * `search T` builds a new search, so it names the record type. `search
+ * saved id` loads an existing saved search, which already has a type: the
+ * record type is omitted and inferred from the account snapshot, and is
+ * written only when the snapshot cannot say (an unknown or dynamic id) or
+ * to assert it. `saved` is a modifier of `search`, recognized only there.
  */
 export interface QueryExpression {
   kind: "QueryExpression";
   operation: QueryOperation;
   keywordSpan: Span;
-  recordType: Identifier;
+  /** The record type written: required for an ad-hoc search, optional for a saved one. */
+  recordType: Identifier | undefined;
+  /** The `saved` clause, for a saved search. */
+  saved: SavedSearchClause | undefined;
+  /**
+   * The search clauses, in source order. They describe one search, so
+   * their order carries no meaning; the binder normalizes them and reports
+   * a singleton clause written twice. `whereSpan`/`condition` below are
+   * the `where` clause, kept directly for the tooling that reads them.
+   */
+  clauses: SearchClause[];
   whereSpan: Span | undefined;
   condition: Expression | undefined;
   span: Span;
 }
 
-export type BinaryOperator = "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||";
+export type BinaryOperator = "==" | "!=" | "===" | "!==" | "<" | "<=" | ">" | ">=" | "&&" | "||";
 
 /**
- *   customer.email == ""
+ *   customer.email === ""
  *   a == "" || b == ""
  *
  * The operator is the source spelling; the binder decides what it means for
- * the operand types (and the emitter spells `==` as `===`). Parentheses do
+ * the operand types. `==`/`!=` are JavaScript's loose equality and
+ * `===`/`!==` its strict one, and each is emitted as written. Parentheses do
  * not produce a node: `(a || b) && c` is a BinaryExpression whose left
  * operand is the `||` node, with its span widened to include the parens.
  */
@@ -309,7 +497,7 @@ export interface MemberExpression {
 
 /**
  *   log.debug("x")          callee log.debug, no type argument
- *   load Customer("123")    callee load, type argument Customer
+ *   load Customer(123)    callee load, type argument Customer
  *
  * A type argument is an identifier written between the callee and the
  * argument list. Syntactically it is just a name; the binder decides that it

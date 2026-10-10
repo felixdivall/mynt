@@ -151,11 +151,15 @@ class LifecycleAnalysis {
   private readonly savedOnSomePath = new Set<Mutation>();
   /** New records that some path did save. Same distinction, for declarations. */
   private readonly persistedOnSomePath = new Set<LocalDeclaration>();
+  /** Every new-record declaration seen, by its local: a save inside `try` leaves the record not certainly saved afterwards. */
+  private readonly newRecords = new Map<LocalSymbol, LocalDeclaration>();
   /** Writes that followed a save of their record on their own path. */
   private readonly savedBefore = new Set<Mutation>();
 
   /** Greater than zero while a loop body is being iterated to its fixpoint. */
   private silenced = 0;
+  /** One per enclosing `try` body being flowed: the join of the states after every statement so far, which is where its handler may start. */
+  private readonly handlerEntries: { state: PathState }[] = [];
 
   /** The record local a reference's persistence belongs to: itself, or a line's parent. */
   private owner(local: LocalSymbol): LocalSymbol {
@@ -252,6 +256,15 @@ class LifecycleAnalysis {
   private flow(body: readonly BoundStatement[], state: PathState): PathState {
     for (const statement of body) {
       if (state.dead) break;
+      this.step(statement, state, (next) => (state = next));
+      for (const entry of this.handlerEntries) entry.state = join(entry.state, state);
+    }
+    return state;
+  }
+
+  /** One statement of `flow`; `replace` installs a successor state built from the current one. */
+  private step(statement: BoundStatement, state: PathState, replace: (next: PathState) => void): void {
+    {
       for (const use of localUsesIn(statement)) {
         const { local } = use.reference;
         if (state.mayRemoved.has(local)) {
@@ -271,7 +284,28 @@ class LifecycleAnalysis {
           const { initializer } = statement;
           if (initializer.kind === "BuiltinCall" && initializer.builtin.kind === "recordOperation" && initializer.builtin.result === "new") {
             state.unpersisted.add(statement);
+            this.newRecords.set(statement.local, statement);
           }
+          // `or { ... }`: the absence branch runs on one path and leaves (every path returns), the binding on the other.
+          if (initializer.kind === "OptionalResolve") replace(join(this.flow(initializer.absence, clone(state)), state));
+          break;
+        }
+        case "TryCatch": {
+          // Any statement of the body may throw, so the handler starts from the join of the state before the body
+          // and the state after each of its statements (nested bodies included): "may" facts from every prefix
+          // survive, "certainly" facts only if every prefix has them. The finalizer runs after either outcome, and
+          // what follows sees their join.
+          const entry = { state: clone(state) };
+          this.handlerEntries.push(entry);
+          const tried = this.flow(statement.body, clone(state));
+          this.handlerEntries.pop();
+          // Changes the exception interrupted are not the handler's to redo: a pending write or an unsaved new
+          // record is dropped at the handler's start, so `try { r.x = 1; save r } catch err { log.error(err) }`
+          // does not warn. The normal path (`tried`) still carries whatever the body left pending.
+          entry.state.pending.clear();
+          entry.state.unpersisted.clear();
+          const after = statement.handler ? join(tried, this.flow(statement.handler, entry.state)) : tried;
+          replace(statement.finalizer ? this.flow(statement.finalizer, after) : after);
           break;
         }
         case "FieldWrite":
@@ -283,7 +317,7 @@ class LifecycleAnalysis {
         }
         case "Return":
           this.exits.push(clone(state));
-          state = deadState();
+          replace(deadState());
           break;
         case "SaveRecord": {
           if (statement.target.kind !== "LocalReference") break;
@@ -310,17 +344,16 @@ class LifecycleAnalysis {
         case "If": {
           const thenState = this.flow(statement.thenBody, clone(state));
           const elseState = statement.elseBody ? this.flow(statement.elseBody, clone(state)) : state;
-          state = join(thenState, elseState);
+          replace(join(thenState, elseState));
           break;
         }
         case "ForEach":
-          state = this.flowLoop(statement.body, state, statement.local);
+          replace(this.flowLoop(statement.body, state, statement.local));
           break;
         case "ExpressionStatement":
           break;
       }
     }
-    return state;
   }
 
   /** Fixpoint of the loop head: entry joined with the body's exit, until stable. */
@@ -394,7 +427,7 @@ class LifecycleAnalysis {
       }
 
       if (effect.deletesOnSomePath) {
-        const unsaved = [...state.unpersisted].find((d) => d.local === local);
+        const unsaved = this.unsavedNew(local, state);
         if (unsaved) {
           this.error(
             DiagnosticCode.DeleteBeforeSave,
@@ -489,10 +522,10 @@ class LifecycleAnalysis {
       return;
     }
 
-    const unsaved = [...state.unpersisted].find((d) => d.local === local);
+    const unsaved = this.unsavedNew(local, state);
     if (unsaved) {
       const record = isRecordType(local.type) ? local.type.record.name : "record";
-      const message = this.persistedOnSomePath.has(unsaved)
+      const message = this.persistedOnSomePath.has(unsaved) || !state.unpersisted.has(unsaved)
         ? `Cannot delete '${local.name}': it may not have been saved on every path that reaches this delete`
         : `Cannot delete '${local.name}' before it has been saved: a new ${record} does not exist in NetSuite until you 'save ${local.name}'`;
       this.error(DiagnosticCode.DeleteBeforeSave, message, statement.span);
@@ -539,6 +572,17 @@ class LifecycleAnalysis {
         break;
     }
     this.error(code, message, use.reference.span);
+  }
+
+  /**
+   * The declaration of `local` if it is a new record not certainly saved here: still pending on some path, or
+   * saved only on some paths (a save inside `try` counts for the normal path alone, since its handler may have
+   * run instead). The second case blocks a delete without being an "unsaved" warning of its own.
+   */
+  private unsavedNew(local: LocalSymbol, state: PathState): LocalDeclaration | undefined {
+    const declaration = this.newRecords.get(local);
+    if (!declaration) return undefined;
+    return state.unpersisted.has(declaration) || !state.savedAll.has(local) ? declaration : undefined;
   }
 
   private reportUnpersisted(declaration: LocalDeclaration): void {
@@ -612,6 +656,8 @@ function localUsesIn(statement: BoundStatement): LocalUse[] {
     forEachExpression(root, (expression) => {
       if (expression.kind === "FieldRead" && expression.receiver.kind === "LocalReference") {
         claim(expression.receiver, "read", expression.field);
+      } else if (expression.kind === "ResultFieldRead" && expression.receiver.kind === "LocalReference") {
+        claim(expression.receiver, "read", { id: expression.result.name });
       } else if (expression.kind === "Lookup" && expression.receiver.kind === "LocalReference") {
         // A projection reads every listed field at once.
         claim(expression.receiver, "read", { id: expression.fields.map((f) => f.field.id).join(", ") });

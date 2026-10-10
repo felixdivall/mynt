@@ -1,0 +1,120 @@
+================================================================================
+saved search with an inferred type
+================================================================================
+
+scheduled {
+    let customers = search saved "customsearch_active_customers"
+    for c in customers { }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (saved_search
+          function: (identifier)
+          id: (string)))
+      (for_statement
+        variable: (identifier)
+        iterable: (identifier)
+        body: (block)))))
+
+================================================================================
+saved search with an explicit type, a local id, and where on the next line
+================================================================================
+
+scheduled {
+    let searchId = "customsearch_open_orders"
+    let orders = search saved SalesOrder searchId
+        where entity === Customer(123)
+    let notes = search saved SystemNote "customsearch_system_notes"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (string))
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (saved_search
+            function: (identifier)
+            type: (type_identifier)
+            id: (identifier))
+          clause: (where_clause
+            condition: (binary_expression
+              left: (identifier)
+              right: (call_expression
+                function: (identifier)
+                arguments: (arguments
+                  (number)))))))
+      (let_statement
+        name: (identifier)
+        value: (saved_search
+          function: (identifier)
+          type: (type_identifier)
+          id: (string))))))
+
+================================================================================
+saved as a local name
+================================================================================
+
+scheduled {
+    let saved = "x"
+    log.debug(saved)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (string))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (identifier)))))))
+
+================================================================================
+saved search cut short keeps the next statement
+================================================================================
+
+scheduled {
+    let customers = search saved
+    let notes = search saved SystemNote
+    log.debug("next")
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (saved_search
+          function: (identifier)))
+      (let_statement
+        name: (identifier)
+        value: (saved_search
+          function: (identifier)
+          id: (identifier)))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (string)))))))

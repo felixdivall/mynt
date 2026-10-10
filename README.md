@@ -58,7 +58,7 @@ any of the `context.UserEventType` names: `create`, `edit`, `view`, `copy`,
 
 ```mynt
 scheduled {
-    let customer = load Customer("123")
+    let customer = load Customer(123)
 
     log.debug(customer.email)
 }
@@ -116,7 +116,7 @@ returns, so there is no `save`, and writing one is an error (MYNT1020). In
 
 ```mynt
 scheduled {
-    let customer = load Customer("123")
+    let customer = load Customer(123)
     customer.comments = "Changed"
     save customer
 }
@@ -144,11 +144,15 @@ The record operations are one family, all written with a record type:
 | `copy Customer(123)` | `Customer` | after `save` |
 | `transform SalesOrder(123) to Invoice` | `Invoice` | after `save` |
 
-An internal id is written as a number or a string, `load Customer(123)` or
-`load Customer("123")`; NetSuite accepts both, and the id is emitted as
-written. Any other type is an error (MYNT1045). There is no union type in
-Mynt: the built-ins simply accept either primitive here, and every id Mynt
-itself exposes (`row.id`, `ref.id`) is a `string`.
+An internal id is written as a number, `load Customer(123)`. That is the
+canonical form; the parser keeps it as a number and the emitter passes it
+to NetSuite as one, `id: 123`. A string is accepted too, `load
+Customer("123")`, as is any `string` or `number` value such as `row.id`,
+a `let` local, or a function parameter; each reaches NetSuite as written.
+A numeric literal must be a whole number, so `Customer(1.5)` is an error
+(MYNT1045), as is any other type. There is no union type in Mynt: the
+built-ins simply accept either primitive here, and every id Mynt itself
+exposes (`row.id`, `ref.id`) is a `string`.
 
 Each lowers to the matching `N/record` call (`record.load`, `record.create`,
 `record.copy`, `record.transform`) with the same `record.Type` constant or
@@ -165,7 +169,7 @@ fails at runtime.
 
 ```mynt
 scheduled {
-    let customer = load Customer("123")
+    let customer = load Customer(123)
     delete customer
 }
 ```
@@ -211,9 +215,9 @@ define(["N/record"], (record) => {
 
 ```mynt
 scheduled {
-    let customer = load Customer("123")
+    let customer = load Customer(123)
 
-    if customer.email == "" {
+    if customer.email === "" {
         customer.comments = "Missing email"
         save customer
     }
@@ -257,7 +261,7 @@ inside the `else` block.
 ### boolean, comparisons, and logical operators
 
 ```mynt
-if customer.email != "" && (customer.comments == "" || customer.comments == "New") {
+if customer.email !== "" && (customer.comments === "" || customer.comments === "New") {
     customer.comments = "Ready"
     save customer
 }
@@ -274,7 +278,8 @@ the ambiguity Mynt exists to remove. The literals `true` and `false` are
 | -------------------- | ---------------- | ------ |
 | `!`                  | boolean          | boolean |
 | `<` `<=` `>` `>=`    | number           | boolean |
-| `==` `!=`            | string, number   | boolean |
+| `===` `!==`          | string, number, boolean, references to one record type (strict, no coercion) | boolean |
+| `==` `!=`            | the same, plus string/number, boolean/number, boolean/string (JavaScript's loose equality) | boolean |
 | `&&` `\|\|`          | boolean          | boolean |
 
 Precedence, highest to lowest, following JavaScript:
@@ -283,33 +288,58 @@ Precedence, highest to lowest, following JavaScript:
 postfix: member access, calls
 !
 <  <=  >  >=
-==  !=
+==  !=  ===  !==
 &&
 ||
 ```
 
-`&&` and `||` are left-associative. Comparisons do not chain: `a == b == c`
+`&&` and `||` are left-associative. Comparisons do not chain: `a === b === c`
 is a syntax error. Parentheses group: `(a || b) && c`. A parenthesized
 expression is not a separate syntax node; the inner expression keeps its
 structure and its source span widens to include the parentheses.
 
-Both comparison operands must have the same type (MYNT1022:
-`customer.email == 10` is an error, not `false`). Records, booleans, and Void
-cannot be compared (MYNT1023; use a boolean directly, `if x` or `if !x`), and
-string has no ordering (MYNT1023). `&&`, `||`, and `!` take only boolean
-operands (MYNT1024). Numeric literals are written as `10` or `2.5`; there is
-no unary minus. A line may break after a binary operator, not before it.
+**Equality.** `==` and `!=` are JavaScript's loose equality, with its
+coercion; `===` and `!==` are its strict equality and require compatible
+types. They are not aliases, and each is emitted as written. One table
+(`src/semantic/equality.ts`) decides what may be compared:
+
+| Operands | `===` `!==` | `==` `!=` |
+| --- | --- | --- |
+| string with string, number with number, boolean with boolean | yes | yes, no coercion involved |
+| string with number, boolean with number, boolean with string | no (MYNT1022, with the loose operator suggested) | yes, JavaScript's abstract equality at runtime (`1 == "1"`, `0 == false`) |
+| references to one record type | yes, by identity | yes, by identity: the mode changes nothing, and a reference never coerces |
+| references to different record types, a reference against a raw id, records, rows, sequences, projections, dates, Void | no | no |
+
+Mynt has no null or undefined, so the loose rules JavaScript has for them
+never arise, and no object ever reaches a loose comparison. Ordering (`<`
+`<=` `>` `>=`) is defined on numbers only (MYNT1023). `&&`, `||`, and `!`
+take only boolean operands (MYNT1024). Numeric literals are written as
+`10` or `2.5`; there is no unary minus. A line may break after a binary
+operator, not before it.
+
+Canonical Mynt prefers `===`/`!==`: SuiteScript developers expect them,
+and they say exactly what they mean. `==`/`!=` are for the cases where
+the coercion is the point.
 
 **Short-circuit.** `a && b` evaluates `b` only when `a` is true, and
 `a || b` evaluates `b` only when `a` is false. This is part of the language,
 not of the backend: when built-ins with effects can appear in expressions,
 they inherit it.
 
-**Lowering.** Mynt `==` is semantic equality on two values of one type, so it
-lowers to JavaScript's strict `===`, and `!=` to `!==`; the loose operators
-would only add coercions that Mynt never permits in the first place. `&&`,
+**Lowering.** Each equality lowers to the JavaScript operator written, so
+the runtime meaning of `1 == "1"` is JavaScript's. In a `query` or `search`
+there is no JavaScript at the point of comparison: the backend compares
+typed values, so a same-type loose comparison lowers exactly like the
+strict one (`email == "x"` and `email === "x"` are one `IS` filter; the
+bound predicate still records which was written), and a loose comparison
+across types (`total == "100"`) is refused there (MYNT1031 for query,
+MYNT1049 for search) with the strict form and the field's type suggested,
+rather than lowered to something that may answer differently from
+JavaScript. References are identity in both modes, so `entity ==
+Customer(123)` and `entity === Customer(123)` are both `ANYOF`. `&&`,
 `||`, and `!` lower to the native operators, which keeps the short-circuit
-semantics. The printer knows the JavaScript precedence of every bound
+semantics; `!` pushed into a comparison keeps its mode, so `!(a == b)` is
+`a != b` and `!(a === b)` is `a !== b`. The printer knows the JavaScript precedence of every bound
 expression form and adds parentheses only where they are needed, so
 `(a && b) || c` prints as `a && b || c` while `(a || b) && c` keeps its
 parentheses. Long conditions break after `&&`/`||`, one operand per line.
@@ -347,11 +377,15 @@ each unpersisted new record gets one MYNT2001 warning at its declaration,
 and each pending write gets one at the write, except that writes to a
 record already reported as never persisted are covered by that warning.
 Nothing here is a type: the same local is usable before `delete` and
-consumed after it.
+consumed after it. `try`/`catch` joins the same way, from every prefix of
+the body, with interrupted pending changes dropped at the handler; see
+[Absence and failure](#absence-and-failure). An `or` branch runs on the
+absent path and returns, so what follows a `let ... or` sees the state
+before it joined with nothing new.
 
 ```mynt
 customer.comments = "Changed"
-if customer.email == "" {
+if customer.email === "" {
     save customer
 }
 ```
@@ -365,12 +399,12 @@ warning MYNT2001: 'customer' may leave this script with unsaved changes: it is m
 ```mynt
 scheduled {
     let customers = query Customer
-        where email != ""
+        where email !== ""
 
     for customer in customers {
         let record = load Customer(customer.id)
 
-        if record.comments == "" {
+        if record.comments === "" {
             record.comments = "Reviewed by Mynt"
             save record
         }
@@ -414,8 +448,8 @@ many loops iterate its result.
 ```mynt
 scheduled {
     let customers = search Customer
-        where email != "" &&
-            comments == ""
+        where email !== "" &&
+            comments === ""
 
     for row in customers {
         log.debug(row.email)
@@ -443,10 +477,12 @@ approximating:
 
 | Mynt | `search.Operator` |
 | --- | --- |
-| string field `== ""` / `!= ""` | `ISEMPTY` / `ISNOTEMPTY` |
-| string field `== "x"` / `!= "x"` | `IS` / `ISNOT` |
-| number field `==` `!=` `<` `<=` `>` `>=` | `EQUALTO` `NOTEQUALTO` `LESSTHAN` `LESSTHANOREQUALTO` `GREATERTHAN` `GREATERTHANOREQUALTO` |
-| boolean field / `!field` | `IS` with `"T"` / `"F"` |
+| string field `=== ""` / `!== ""` (or `==` / `!=`, same type) | `ISEMPTY` / `ISNOTEMPTY` |
+| string field `=== "x"` / `!== "x"` (or `==` / `!=`) | `IS` / `ISNOT` |
+| number field `===` `!==` (or `==` `!=`) `<` `<=` `>` `>=` | `EQUALTO` `NOTEQUALTO` `LESSTHAN` `LESSTHANOREQUALTO` `GREATERTHAN` `GREATERTHANOREQUALTO` |
+| boolean field, `!field`, `field === true`, `field !== true` | `IS` with `"T"` / `"F"` |
+| select field `=== Customer(123)` / `!== Customer(123)` (or `==` / `!=`) | `ANYOF` / `NONEOF` with `["123"]` |
+| any field compared loosely with a value of another type | refused (MYNT1049): N/search has no coercion |
 | `&&` / `\|\|` | `[a, "and", b]` / `[a, "or", b]` filter expressions |
 
 `!` has no node of its own: it is pushed down to the comparison, flipping
@@ -466,6 +502,348 @@ types the schema promises (search results and `lookupFields` may return
 numbers as strings). Both would be fixed inside the two emitted helpers
 without touching the language.
 
+### Search clauses
+
+```mynt
+let orders = search SalesOrder
+    select tranid, amount, entity
+    where amount > 1000
+    order by trandate desc
+    limit 100
+```
+
+After its source (`search T` or `search saved ...`), a search takes
+clauses. Three rules make them a description rather than a procedure:
+
+> Search clauses describe one search and may appear in any order.
+
+> Singleton clauses may appear only once. Repetition is treated as a
+> likely mistake.
+
+> `select` is optional; without it, Mynt infers required columns from
+> row usage.
+
+> `limit` bounds a sequence; `first` returns one optional row. They are
+> different results, and a search cannot ask for both.
+
+> A `group by`, or an aggregate in `select`, makes the search a summary
+> search; see [Summary searches](#summary-searches).
+
+So `where ... order by ... select ...` and `select ... where ... order by
+...` are the same search: the parser collects the clauses as written and
+the binder normalizes them into one model (`select`, `orderBy`, `limit`,
+`first`, and the predicate on the `Query` node), so source order is never
+execution order and nothing is "selected first, then filtered". A second
+`where`, `select`, `order by`, `limit`, or `first` is MYNT1056 at the repeat,
+naming the first's line and the fix (combine conditions with `&&`/`||`,
+list fields or sort keys in one clause); it is never merged. The clause
+words, like `asc` and `desc`, are contextual: `let select = "x"` is a
+local, and a line that begins with a clause word continues the search
+above it.
+
+**`select`.** Names the fields the rows expose: schema fields of the
+searched record, or a field one join away (`entity.email`), with the
+existing join rules. With `select`, exactly those fields are fetched,
+read or not, and a read of anything else is MYNT1050 naming the clause to
+extend; `id` is row identity and always present, so `select id` is never
+needed. A selected select field is a display reference (`order.entity.id`,
+`.text`); its own id and text come with that column, so
+`select entity.email` alone exposes `order.entity.email` but not
+`order.entity.id`. Without `select`, the rows expose every schema field
+and the planner fetches what the loop reads, as before.
+
+**`order by`.** Sort keys in one clause, each `asc` (the default) or
+`desc`; a joined field may be a key. A sort key is a backend column, not
+an exposed field: `select tranid order by trandate desc` fetches
+`trandate` as a hidden, sorted column that the row does not expose. Ad-hoc
+searches keep internal id as a final tiebreaker so pages stay stable
+whatever the keys. Multiselects and fields of unknown type cannot be sort
+keys (MYNT1057).
+
+**`limit`.** At most this many rows, after filtering and sorting, as a
+positive whole literal (MYNT1057 otherwise); the results helper sizes its
+pages to the limit (within NetSuite's 5 to 1000) and stops fetching once
+it has them. The result is still a sequence: `limit 1` is a
+`Sequence<T>` holding at most one row, never a single row. No `skip`
+yet. The pre-release `take` reports the new spelling.
+
+**`first`.** The first row under the effective ordering, or none. The
+result is one optional row, `SalesOrder?`, a type of its own rather than
+a sequence with a runtime quirk: it cannot be iterated (MYNT1029), and
+`first` with `limit` is MYNT1057 whichever was written first, since they
+state different cardinalities. `select` means the same as always, so
+`select memo first` is one optional projected row, not a `memo` value.
+Ordering is applied before the row is chosen whatever the clause order,
+and ad-hoc searches keep the internal-id tiebreaker, so without an `order
+by` the first row is the lowest internal id; a saved search's own
+ordering applies there. Lowering fetches that one row alone through
+`run().getRange({ start: 0, end: 1 })`, normalized by the same row helper
+as paged results, and is `null` when there is none. An optional row
+cannot be read from as it is (MYNT1058): it is resolved with `or` where
+it is declared, or tested with `if`; see [Absence and
+failure](#absence-and-failure).
+
+On a saved search the same clauses apply: `select` restricts the row
+shape and plans columns through the saved-search planner (reusing or
+appending columns in memory), `where` is AND-ed onto the saved filters as
+before, `order by` replaces the saved ordering for that run by clearing
+every existing column's sort (`search.Sort.NONE`) before setting the
+keys, and `limit` and `first` apply as on ad-hoc searches; nothing is
+saved back. That `Column.sort` can be
+cleared on a loaded search is documented and not yet verified live.
+`query` accepts only `where` (MYNT1031 for the others): N/query's own
+column and sort model is a separate backend decision.
+
+The planner therefore has three reasons to fetch a column: it was
+selected, the loop reads it (without `select`), or a sort needs it. Each
+column is one entry keyed by field (or `join.field`), carrying its join,
+its sort, and whether it is hidden; the results helper skips hidden
+columns when building rows. Aggregates are not in `select` yet, but its
+items are expressions in the AST, so `sum(amount)` can be an item later
+without reshaping the clause.
+
+### Summary searches
+
+```mynt
+let totals = search SalesOrder
+    where mainline === true
+    group by entity
+    select entity, total = sum(amount)
+    order by total desc
+```
+
+A `group by` clause, or an aggregate in `select`, makes a search a summary
+search: its rows are aggregate buckets, one per group, rather than
+records. The clauses keep their roles, and still may appear in any order:
+
+```text
+where      filters source rows, before anything is grouped
+group by   defines the grouped dimensions (fields, or one join away)
+select     names the grouped fields and the aggregate outputs
+order by   sorts by a result name: a grouped field or an aggregate alias
+limit      limits the summary rows (still a sequence)
+first      returns one optional summary row, resolved with `or` as usual
+```
+
+> Mynt exposes summary intent, not NetSuite's `search.Summary` ceremony.
+
+**Aggregates** are written inside `select`, function-style, and each is
+named: `total = sum(amount)`, `orders = count()`. The name is the result
+field the row exposes (`row.total`); there is no automatic name. The
+aggregates are `sum`, `avg` (a number field, yielding a number), `min`,
+`max` (a number, date, or string field, yielding the same type), and
+`count` (any field, counting the rows that have a value, or `count()` and
+`count(id)`, which count rows as `COUNT` of `internalid`). Anything else
+is MYNT1062, naming the aggregate and the field's type: `sum(entity)`,
+`avg(memo)`, an unnamed aggregate, `sum(id)`. The aggregate names are
+contextual to `select` (`let sum = 1` is a local), as is `group`.
+
+**Grouping.** `group by` takes schema fields and one-hop joined fields
+(`group by entity.email`), each once (MYNT1047); multiselects cannot
+group (MYNT1057). Every plain field in `select` must be grouped, since a
+bucket has one value per group: `group by entity select entity, memo,
+total = sum(amount)` is MYNT1061 at `memo`, naming both fixes (group by
+it, or aggregate it). Nothing is grouped silently. A grouped field need
+not be selected (it is then a backend-only group column), and an
+aggregate needs no `group by` at all: `select total = sum(amount)` is one
+row, the overall total.
+
+**Rows.** A summary row has type `Summary<SalesOrder>` and exposes
+exactly its result fields: the grouped fields, with the shape they have
+on an ordinary row (a grouped select field is a `Ref<Customer>` with
+`.id` and `.text`, both fetched with the group column; a grouped joined
+field stays nested, `row.entity.email`), and the aggregates by name.
+Nothing else: a bucket is not a record, so `row.id` is MYNT1011 (the
+grouped reference carries the id of what it refers to), and a field that
+was neither grouped nor aggregated is MYNT1050. Rows are read-only like
+any row. The row has one flat namespace: an alias may not repeat or take
+a selected field's name (MYNT1063). The source positions (`where`,
+`group by`, an aggregate's argument) name source fields, never result
+names, so `where total > 10000` with `total = sum(amount)` is MYNT1063
+whether or not `total` is also a field, and the message says `where`
+filters before aggregation and there is no `having` yet. Aliases are
+output names: `doubled = sum(total)` over an alias is refused the same
+way. An alias may share a field's name as long as that field is not used
+as a source in the same search, which keeps `total = sum(amount)` legal
+on a record that has a `total` field.
+
+**Ordering.** `order by` in a summary search names result fields: an
+aggregate alias (`order by total desc`, bound after the aliases are
+collected from `select`, so clause order is irrelevant) or a grouped
+field. Anything else is MYNT1057 listing the result names. The aggregate
+sorts by its own column: `select total = sum(amount) order by total` is
+one `SUM(amount)` column carrying the sort, never two.
+
+**Lowering.** Each result is one `search.createColumn` with a `summary`
+(`search.Summary.GROUP`, `SUM`, `COUNT`, `MIN`, `MAX`, `AVG`) and, for a
+joined field, its join; an aggregate's column also carries its alias,
+the row slot it fills. The column plan is the ordinary one with `summary`
+and `alias` on each entry, so hidden sort and group columns, references,
+`limit` (page size), `first` (`getRange` of one), and `or` need nothing
+summary-specific. Results are read with the `Column` object the helper
+created, so the summary type travels with each `getValue`/`getText` and
+no column is addressed by name alone. A summary search gets no internal
+id tiebreaker (a plain column in a summary search is invalid); its group
+columns without a written sort sort ascending after the written keys
+instead, which keeps pages stable the same way. Summary rows carry no
+`id`. Over a saved search, Mynt's summary keeps the saved filters and
+type and replaces the saved columns (every column of a summary search
+must be a summary column); a saved search that already has summary
+columns is refused at runtime with a Mynt error, never merged, because
+the account snapshot does not record column summaries. Used as ordinary
+rows, such a saved search remains an unmodeled limitation. `having`,
+formulas, distinct counts, computed select expressions, and `query`
+summaries are not in the language; a `having` would be a clause bound
+against the result fields and lowered to `search.createFilter` with a
+`summary`, beside `where`.
+
+### Saved searches
+
+```mynt
+// ad-hoc: Mynt builds the search, so it needs the record type
+let customers = search Customer
+    where email !== ""
+
+// saved, inferred: the saved search already has a type
+let customers = search saved "customsearch_active_customers"
+
+// saved, explicit: when the snapshot cannot say, or to assert it
+let notes = search saved SystemNote "customsearch_system_notes"
+```
+
+`search saved id` loads an existing saved search by its script id and
+uses it as defined. The record type is not written, because the saved
+search already has one: Mynt does not make the programmer repeat metadata
+that NetSuite owns and Mynt can know safely. `search Customer` names the
+type because Mynt is constructing a new search; `search saved
+"customsearch_x"` does not, because the account snapshot says what the
+search returns (`savedSearches` in the snapshot, by script id). `saved`
+is a modifier of `search`, contextual like `where`, so `let saved = "x"`
+is a local; `query` has no saved form, since N/query has no saved
+searches. The pre-release `using` spelling is gone and reports the new
+form.
+
+The type is written when the snapshot cannot infer it: an id the snapshot
+does not list (MYNT1054, with the explicit form shown), or an id that is
+a value rather than a literal (`search saved Customer searchId`), since
+Mynt does no constant propagation. Written on a search the snapshot does
+know, it is an assertion the compiler checks: `search saved Customer
+"customsearch_open_orders"` is MYNT1055 when the snapshot says
+`SalesOrder`. Either way the result is the same typed search row sequence
+as the ad-hoc form, and downstream analysis cannot tell inferred from
+explicit: the same `Query` node with a `source` of `saved(id)` instead of
+`adHoc`, the same `Sequence<T>` of read-only rows with `row.id` (from
+`Result.id`, whatever columns the search has), the same column planner,
+predicates, joins, and reference normalization.
+
+Lowering is `search.load({ id })` with no type: NetSuite needs none for an
+ordinary saved search, and the inferred type is Mynt's typing, not the
+backend's business. A standalone search type (`searchType` on the
+snapshot entry, `systemnote` for instance) is the one case `search.load`
+must be told the type, and then it is passed as the snapshot spells it.
+Whatever the source of the type, the loaded search's `searchType` is still
+checked at runtime against the record's search type and family, so a
+snapshot that is wrong fails loudly rather than mistyping rows.
+
+The emitted `mynt$savedSearch` helper calls `search.load`, keeps the
+search's filters and columns, and makes only in-memory changes: a planned
+field whose plain column (no join, summary, or formula) already exists is
+read through that column, the rest are appended, and a `where` is AND-ed
+onto the search's `filterExpression` as one operand, `[existing, "and",
+mine]`, so nested saved-search logic is never flattened. Nothing is saved
+back, and the fake runtime proves a reload sees the original definition.
+Results run through the same `mynt$results` paging and normalization as
+ad-hoc searches. No sort column is added: the saved search's own order
+decides, and if it has none, paging relies on NetSuite's default order,
+which is the one guarantee the ad-hoc form has that this form does not.
+
+A saved search over a transaction record may report `transaction` as its
+`searchType`, so the helper accepts the record's search family as well as
+its own id; the family is platform metadata on the record schema
+(`searchFamily`, set by `schema pull` from the same table as
+`suiteScriptType`), never derived from names.
+
+Saved-search metadata is account metadata, kept in the snapshot beside
+the records and never in the builtin sample. `schema pull` does not fill
+it yet: NetSuite's REST metadata catalog describes record types, not saved
+searches, so today a snapshot states them by hand, and a later discovery
+step (a deployed script enumerating saved searches, or another account
+enrichment) can write the same shape. The snapshot stays version 1: the
+field is optional and additive, and a snapshot without it is a valid
+snapshot that knows no saved searches. In the editor, `search saved "`
+completes the snapshot's script ids, filtered to one record type when it
+is written.
+
+Not verified live: that `filterExpression` on a loaded search returns and
+accepts the nested array form, that appending columns in memory is
+accepted without `save()`, that `searchType` reports the record type id
+for custom records, and which search types NetSuite treats as standalone.
+A summary saved search, whose results have no single record id, is not
+modeled.
+
+### Joins
+
+```mynt
+scheduled {
+    let orders = search SalesOrder
+        where entity.email !== ""
+
+    for order in orders {
+        log.debug(order.entity.email)
+        log.debug(order.entity.text)
+    }
+}
+```
+
+A relationship the schema proves (`SalesOrder.entity` is a single select
+with `refTarget: Customer`) is a join: `entity.email` in a search
+condition and `order.entity.email` on a search row mean the `email` field
+of the customer the order refers to, fetched by the same search through a
+joined column the planner adds. No record is loaded and nothing is looked
+up. The path is resolved against the schema, never as a string: the bound
+nodes (`JoinedQueryField`, `JoinedFieldRead`) and the predicate leaves
+carry a `JoinStep`, the relationship field and the record it reaches, and
+the planner keys columns by `entity.email`, so a field read in the
+predicate, on the row, and twice over is one column and one filter.
+
+On the row, joined values nest under the reference: `order.entity` holds
+`id` and `text` when they are read, and `email` beside them when it is.
+`entity` itself is planned only when its id or text is read. A joined
+field that is a select is a display reference (`order.entity.subsidiary
+.text`); its own fields would be a second hop, which is refused with the
+lookup form to write instead. One hop is the current depth: a deeper path
+would be the same `JoinStep` repeated, with N/search's own limits on
+nested joins to establish first.
+
+The same dotted syntax stays what it was everywhere else. On a loaded
+record, `order.entity.email` is still refused with the lookup form
+(`order.entity[email]`), because a bare `Ref<T>` never follows itself
+without the author asking; in a `query` it is refused as a backend
+limitation, since N/query's join model is separate. A reference whose
+target the schema does not name cannot be followed, and a multiselect is
+not one relationship (MYNT1053 for the join cases, MYNT1011 for the
+unknown target).
+
+Lowering: a joined column is `search.createColumn({ name, join })` and a
+joined filter is `["join.field", operator, value]`. The join id is
+ASSUMED to be the relationship field's id (`subsidiary`,
+`custrecord_owner`), overridable per field by `searchJoin` in a snapshot,
+because NetSuite's metadata does not state join ids and some standard
+relationships use their own names (a transaction's `entity` joins as
+`customer`, `vendor`, or `employee`); `joinId` in the emitter is the one
+place that decides. Saved searches get joined columns through the same
+planner, reusing an existing column only when name and join match exactly
+and it carries no summary or formula.
+
+Completion after a search row's or condition's reference lists `id`,
+`text`, and the target's fields marked `joined`; a bare reference
+elsewhere still lists `id` (and `text` when carried). Hover on a joined
+field names the target field and the relationship it is reached through.
+Tokens stay `property` on both parts.
+
+Not verified live: that the join id defaults as assumed, and that a joined
+`getText` returns the display text for a joined select column.
+
 The lifecycle analysis treats a loop as running zero or more times: the loop
 head's state is the fixpoint of the entry state joined with the body's exit
 state, computed by re-running the body with diagnostics suppressed until it
@@ -473,6 +851,97 @@ is stable, then once more to report. A record created in the body and never
 saved warns; a write and save in the body do not; a conditional `delete`
 in the body leaves the record possibly deleted both after the loop and on
 the next iteration.
+
+## Absence and failure
+
+```mynt
+scheduled {
+    let customer = search Customer
+        where email === "owner@example.com"
+        select comments
+        first
+        or {
+            log.error("No customer owns that address")
+            return
+        }
+
+    log.debug(customer.comments)
+
+    try {
+        let record = load Customer(customer.id)
+        record.comments = "Reviewed by Mynt"
+        save record
+    } catch err {
+        log.error(err)
+    }
+}
+```
+
+Two things can go "wrong" at runtime, and Mynt keeps them apart:
+
+> `or` handles absence. `catch` handles thrown runtime errors.
+
+A search with no matching row is not a failure: `first` says so in its
+type, `Customer?`, and the program must say what happens then. A record
+that does not exist when loaded, a search NetSuite refuses, a save that
+violates a rule: those are failures NetSuite reports by throwing, and
+they are handled, if at all, with `try`/`catch`. An absent row never
+enters `catch`, and a thrown error never takes the `or` branch.
+
+**`or`.** `let x = <optional> or return` and `let x = <optional> or {
+... }` resolve an optional where it is declared. The value is evaluated
+once; if it is absent, the `or` branch runs and leaves; otherwise `x` is
+bound as the plain row type, `Customer`, for the rest of the scope. The
+branch is `return` or a block, and the block must end in `return` on
+every path, since `x` has no value on that path (MYNT1060). `or` requires
+an optional value (MYNT1059; only `first` produces one so far) and is not
+a fallback: there is no `x or y`, and no `??` or `?.`. It is a resolution
+of a `let` initializer only, a contextual word that may begin the next
+line after a search's last clause, and `let or = ...` is a local.
+Lowering keeps the single evaluation visible:
+
+```js
+const customer$maybe = mynt$search(..., undefined, true);
+if (customer$maybe === null) {
+    log.error({ title: "execute", details: "No customer owns that address" });
+    return;
+}
+const customer = customer$maybe;
+```
+
+**Presence test.** `if x { ... }`, with a bare optional local as the
+condition, is a presence test and narrows `x` to its row type in the
+`then` block; when the `else` block returns, `x` is narrowed after the
+`if` as well. It lowers to `x !== null`. Nothing else is a presence test:
+a field or any other value in a condition is still MYNT1021, as there is
+no truthiness, and the optional keeps its type everywhere it is not
+narrowed (MYNT1058 names both forms).
+
+**`try`/`catch`.** `try { ... } catch err { ... } finally { ... }` runs
+the body and, if a statement in it throws, the handler; `finally` runs
+after either. The `catch` and `finally` words sit on the line of the
+closing `}`, as `else` does; `try` needs at least one of them. The
+binding is optional (`catch { ... }`) and, when written, is a local of
+type `Error` scoped to the handler: `err.name` and `err.message` are
+strings (NetSuite's code, such as `RCRD_DSNT_EXIST`, and its
+description), it can be logged as it is, and it has no other members
+(MYNT1011). Everything lowers to the JavaScript statement of the same
+shape; an unnamed binding is emitted as `mynt$error`. There is no
+`throw`, no checked exceptions, and no error types beyond `Error`: Mynt
+does not yet model which operations fail or how, so a `catch` is the
+author's claim that whatever the body did may be abandoned.
+
+The lifecycle analysis treats a `try` body as able to stop at any
+statement: the handler starts from the join of the states after every
+prefix of the body, so a record deleted or a line removed anywhere in it
+*may* be gone in the handler and after the statement, and a save inside
+`try` is not a certain save afterwards (a new record saved only there
+cannot be deleted after the statement without MYNT1026 unless the handler
+leaves). Changes the exception interrupted are not the handler's to redo:
+a write or a new record pending when the handler starts is dropped there,
+so the usual `try { r.comments = ...; save r } catch err { log.error(err)
+}` warns nothing, while a change the handler itself makes, or one the
+body leaves pending on its normal path, is reported as always.
 
 ## Record references and lookups
 
@@ -488,8 +957,9 @@ scheduled {
 `Customer(123)` (or `Customer("123")`) is a *record reference*: a value of
 type `Ref<Customer>` that identifies one record by internal id and does
 nothing else. Constructing it performs no NetSuite work and needs no
-module; at runtime it is the id itself. It exposes one member, `ref.id`,
-a `string` whatever the id was written as, so it reads like `row.id`.
+module; at runtime it is the id itself, as written. It exposes one
+member, `ref.id`, a `string` whatever the id was written as, so it reads
+like `row.id`.
 Reading a field through it (`ref.email`), assigning through it, saving it,
 or deleting it is an error whose message shows the two ways forward:
 project the fields you need, or `load Customer(ref.id)` (MYNT1011,
@@ -522,14 +992,109 @@ Using a lookup on a reference infers `N/search`; a script that only looks
 fields up depends on `N/search` and not on `N/record`. The flagship
 example is `examples/lookup-customer.mn`.
 
-Select fields are not modeled yet. A field of type `Ref` can be projected
-like any other and is inert, as it is on a loaded record: the schema
-snapshot shipped here has no `refTarget`, `mynt schema pull` fills one in
-only when NetSuite's metadata names the target, and the shape
-`lookupFields` returns for a select field has not been verified against an
-account. The intended model is `Ref<T>` with `ref.id` and `ref.text`, so a
-reference obtained from a field and one written as `Customer(123)` are the
-same kind of value; `Ref<T>` already carries the record type for it.
+### Select fields, `.id`, and `.text`
+
+A select field whose target record type the schema names (`refTarget`,
+see [schema pull](#what-schema-pull-does)) reads as a reference,
+`Ref<T>`, wherever it is read. `.id` is always the record's identity, the
+same spelling as `row.id` and `Customer(123).id`. `.text` is the display
+text, and it exists only on a value whose backend representation actually
+carried the text with the id; it is never fetched on demand, so a member
+access never hides a NetSuite call:
+
+| Read through | Value | `.id` | `.text` |
+| --- | --- | --- | --- |
+| `Customer(123)` | identity reference | yes | no (MYNT1051) |
+| a loaded, created, context, or parameter record (`order.entity`) | identity reference, from `getValue` | yes | no (MYNT1051) |
+| a query row (`row.entity`) | identity reference, from the column | yes | no (MYNT1051) |
+| a lookup (`Customer(123)[subsidiary]`, `info.subsidiary`) | display reference, from `lookupFields` | yes | yes |
+| a search row (`row.entity`) | display reference, from `getValue` and `getText` | yes | yes |
+
+Both kinds are one type, `Ref<T>`: a reference knows what it refers to,
+and the value either carries text or does not, exactly as a row carries
+its origin. Hover and completion show the difference (`Customer reference
+· id: string` versus `· id: string · text: string`). A reference from a
+field projects like any other, so `order.entity[email, subsidiary]` is one
+`lookupFields` call on the customer the order refers to, and a display
+reference projects through its id the same way. A `Ref` field whose
+target the schema does not name stays inert: readable, accepted nowhere,
+with no `.id`.
+
+A multiselect (`selection: multiple` with a named target) read through a
+lookup is a `Sequence<Ref<T>>` of display references, iterated with
+`for`; one lookup fetches the whole list. Read anywhere else it stays
+inert for now, since the shapes `getValue` and search columns use for a
+multiselect are not modeled yet.
+
+NetSuite's own shapes are confined to three emitted helpers.
+`lookupFields` reports a select as an array of `{ value, text }` objects
+(one element for a select, several for a multiselect, per its
+documentation; not yet verified against an account): `mynt$ref` turns one
+into `{ id, text }`, `mynt$refs` turns a list into a list of them, and
+`mynt$lookup` runs a lookup and normalizes the columns the compiler marked
+as references, so the single-field rule still holds and `info.subsidiary`
+is the normalized value. The search helper takes the columns that are
+references and builds `{ id, text }` from `getValue` and `getText`
+itself. Nothing after `function execute` mentions `value`, `getValue`, or
+`getText` for a reference. A query row's select column is passed through
+as `N/query` returns it, so its `.id` being a string rests on that
+backend, which is also unverified.
+
+### Comparing references
+
+```mynt
+let customer = Customer(123)
+let orders = search SalesOrder
+    where entity === customer
+for order in orders {
+    if order.entity === Customer(123) { ... }
+}
+```
+
+Two references to the same record type compare with `===`/`!==` (and
+`==`/`!=`, which mean the same for references) by identity: `.id` against
+`.id`, wherever either came from. A display
+reference compares exactly like an identity reference, since text is
+carried information, not identity; `Customer(123)[subsidiary] ==
+Subsidiary(1)` is well formed. Ordering is not defined for references.
+The rule is the ordinary comparison rule, so it holds in an `if` as in a
+`where`, and the emitter normalizes both runtime shapes through one
+identity function (`emitReferenceId`): an identity reference is its id
+string, a display reference contributes `.id`, a constructor its
+normalized id. No display text and no reference object ever reach a
+comparison or a filter, and comparing never fetches anything.
+
+Rejected, each with its own message: references to different record
+types (`entity == Subsidiary(1)`, MYNT1022); a reference against a raw
+id (`entity == "123"`), because `Customer("123")` keeps the record type
+checked and the backend portable; a scalar field against a reference; a
+reference whose target the schema does not name, since Mynt cannot verify
+what it refers to and will not guess from the field name; and a
+multiselect, which holds several references and needs a membership test
+that does not exist yet.
+
+In a `search`, the predicate keeps the comparison as a reference leaf
+(`CompareReference` in the neutral predicate, `ReferenceFilter` in the
+N/search form) rather than reducing it to a string early: the field, its
+target record type, the operation, and a *list* of operands, each a
+constructor's id or a reference local, so a later membership form
+(`entity in [...]`) is the same leaf with more values. The lowering is
+`anyof`/`noneof` over ids, N/search's operators for select fields; `is`
+is a text operator and is not used. `!` flips the two as it does for
+scalars. `where entity.id == "123"` is refused with a pointer to the
+typed form. A `query` accepts the same expression but does not lower it
+yet (MYNT1031): how N/query filters a select field by id is a separate
+backend decision that has not been taken.
+
+Two N/search behaviors here are from documentation, not a live account:
+that select fields filter by `anyof`/`noneof` over internal ids, and that
+`noneof` matches records whose field is empty, as the complement of
+`anyof`.
+
+Not yet in the language: display text on loaded-record reference fields,
+which the backend could supply locally through `getText` without any
+network call, a decision recorded in the report for a later increment
+rather than taken here.
 
 ## Sublists
 
@@ -631,14 +1196,14 @@ an account; `mynt schema pull` does not populate them yet.
 ```mynt
 fn removeEmptyLines(order: SalesOrder) {
     for line in order.item {
-        if line.quantity == 0 {
+        if line.quantity === 0 {
             remove line
         }
     }
 }
 
 fn needsReview(memo: string): boolean {
-    return memo == "" || memo == "TBD"
+    return memo === "" || memo === "TBD"
 }
 
 scheduled {
@@ -704,7 +1269,7 @@ entry point parameter counts as declared. There is no reassignment yet.
 `Customer` and `SalesOrder` are record types: compile-time symbols from the
 schema, not runtime values. They appear in three places: the entry point
 parameter type, the record-type argument of a built-in such as
-`load Customer("123")`, and as the constructor of a record reference,
+`load Customer(123)`, and as the constructor of a record reference,
 `Customer(123)`. Using one as a value is an error that points at `load`
 and at the reference form. A record-typed value, whether the entry point record or a loaded one,
 resolves fields through the same path, so `customer.email` means the same
@@ -727,24 +1292,30 @@ EventFilter := Identifier ("|" Identifier)*
 Parameter   := Identifier ":" Identifier
 Block       := "{" Statement* "}"
 Statement   := LetStatement | SaveStatement | DeleteStatement | RemoveStatement | AddStatement | ReturnStatement
-             | IfStatement | ForStatement | Expression ("=" Expression)? Terminator?
+             | IfStatement | ForStatement | TryStatement | Expression ("=" Expression)? Terminator?
+TryStatement:= "try" Block ("catch" Identifier? Block)? ("finally" Block)? Terminator?
 ReturnStatement:= "return" Expression? Terminator?
 ForStatement:= "for" Identifier "in" Expression Block Terminator?
-LetStatement:= "let" Identifier "=" Expression Terminator?
+LetStatement:= "let" Identifier "=" Expression (Terminator? "or" ("return" | Block))? Terminator?
 SaveStatement:= "save" Expression Terminator?
 DeleteStatement:= "delete" Expression Terminator?
 RemoveStatement:= "remove" Expression Terminator?
 AddStatement:= "add" Expression Block Terminator?
 IfStatement := "if" Expression Block ("else" Block)? Terminator?
 Expression  := Unary (BinaryOperator Unary)*
-BinaryOperator := "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
+BinaryOperator := "||" | "&&" | "==" | "!=" | "===" | "!==" | "<" | "<=" | ">" | ">="
 Unary       := "!" Unary | Postfix
 Postfix     := Primary ("." Identifier | TypeArgument ("(" Arguments ")")? ("to" TypeArgument)? | "(" Arguments ")" | Projection)*
 Projection  := "[" Identifier ("," Identifier)* "]"
 TypeArgument:= Identifier
 Arguments   := (Expression ("," Expression)*)?
 Primary     := Identifier | String | Number | "true" | "false" | "(" Expression ")" | Query
-Query       := ("query" | "search") Identifier (Terminator? "where" Expression)?
+Query       := ("query" | "search") (Identifier | "saved" Identifier? (String | Identifier)) (Terminator? Clause)*
+Clause      := "where" Expression | "select" SelectItem ("," SelectItem)* | "order" "by" SortKey ("," SortKey)*
+             | "group" "by" FieldPath ("," FieldPath)* | "limit" Primary | "first"
+SelectItem  := FieldPath | Identifier "=" ("sum" | "count" | "min" | "max" | "avg") "(" FieldPath? ")"
+SortKey     := FieldPath ("asc" | "desc")?
+FieldPath   := Identifier ("." Identifier)*
 ```
 
 Statements end at a newline (Go's rule: only after a token that can end a
@@ -759,7 +1330,7 @@ name a local. Binary operators are parsed by precedence climbing over a small
 operator table (`src/parser/parser.ts`) that records each operator's
 precedence and associativity; a new operator is a table entry.
 A call may carry a type argument between the callee and its parentheses:
-`load Customer("123")`. The parser records it as a name; the binder requires
+`load Customer(123)`. The parser records it as a name; the binder requires
 it to be a record type. `Customer(123)` is syntactically a call of a bare
 name; the binder makes it a record reference because the name is a record
 type. `[` after an expression begins a projection and nothing else.
@@ -878,7 +1449,9 @@ to the account. The raw documents are normalized in
 | `number`, `integer` | `Number` (spelled `number` in Mynt) |
 | `string` | `Text` (spelled `string` in Mynt; a fixed `enum` is kept under `values`) |
 | `string` with `format: date` / `date-time` | `Date` |
-| object with an `id` (a reference) | `Ref`, with `refTarget` when the `$ref` names a catalog type |
+| object with an `id` (a reference) | `Ref`, `selection: single`, with `refTarget` when the `$ref` names a catalog type |
+| array or collection of references (a multiselect) | omitted with sublists: the metadata does not yet let the normalizer tell them apart, so `selection: multiple` comes only from a snapshot or fixture that states it |
+| (not in the metadata) | `searchJoin` on a Ref field, when an account proves the N/search join id differs from the field id; `searchFamily` on a transaction record, from the platform table |
 | anything else | `Unknown` |
 
 `Date`, `Ref`, and `Unknown` are deliberately not `Text`: such a field can
@@ -966,8 +1539,9 @@ four kinds; rename only for locals, because fields and record types are
 NetSuite names owned by the schema and built-ins are the language's.
 
 A rename is refused, with the reason, when the new name is not an
-identifier or is a reserved word (`let`, `if`, `else`, `save`, the entry
-point keywords, `true`, `false`), when another local with that name is in
+identifier or is a reserved word (`let`, `if`, `else`, `save`, `try`,
+`catch`, `finally`, the entry point keywords, `true`, `false`), when
+another local with that name is in
 scope anywhere the renamed local is (scope regions are nested or disjoint,
 so any overlap means one declaration would see the other, which the binder
 forbids), or when a built-in with that name is used inside the renamed
@@ -990,10 +1564,12 @@ names:
 | `query`, `search`, `load`, `create`, `copy`, `transform` | `function` | `defaultLibrary` |
 | `log` and `log.debug` | `namespace`, `method` | `defaultLibrary` |
 | entry point and function parameters | `parameter` | `declaration` at the declaration |
-| `let` locals, loop variables | `variable` | `declaration` at the declaration |
-| body field, line field, query field, projected field, sublist, `id` | `property` | `readonly` when the schema says so, `modification` on an assignment target |
+| `let` locals, loop variables, caught errors | `variable` | `declaration` at the declaration |
+| body field, line field, query field, projected field, grouped field, sublist, `id`, `text`, `Error.name`, `Error.message` | `property` | `readonly` when the schema says so, `modification` on an assignment target |
 | event filters (`create \| edit`) | `enumMember` | |
-| `beforeSubmit`, `afterSubmit`, `scheduled`, `fn`, `let`, `if`, `else`, `for`, `in`, `query`, `where`, `save`, `delete`, `add`, `remove`, `to`, `return`, `true`, `false` | `keyword` | |
+| `beforeSubmit`, `afterSubmit`, `scheduled`, `fn`, `let`, `if`, `else`, `for`, `in`, `saved`, `where`, `select`, `order`, `group`, `by`, `asc`, `desc`, `limit`, `first`, `or`, `try`, `catch`, `finally`, `save`, `delete`, `add`, `remove`, `to`, `return` | `keyword` | |
+| `sum`, `count`, `min`, `max`, `avg` in a `select` | `function` + `defaultLibrary` | |
+| an aggregate's result name, in `select`, `order by`, and on a row | `property` | `declaration` in `select`, `readonly` |
 | string and number literals | `string`, `number` | |
 
 Classification is by what bound at each position, never by spelling: in
@@ -1047,7 +1623,7 @@ The compiler's handwritten parser remains the single authority on what Mynt
 is; the Tree-sitter grammar mirrors it for the editor and nothing in `src/`
 depends on it. The grammar keeps the compiler's two lexical rules: a newline
 ends a statement only after an identifier, string, number, `)` or `}` (and
-not before a `where` continuation), implemented in the external scanner;
+not before a clause word or `or` continuing the line above), implemented in the external scanner;
 and `return` is the only reserved word. Every other keyword is contextual,
 so `let where = "x"` highlights `where` as a variable, as the compiler
 parses it. Tree-sitter recovers from errors by inserting `MISSING` and
@@ -1107,8 +1683,8 @@ theme can style it:
 
 | Source                                     | Semantic token                        | Grammar capture (fallback)  |
 | ------------------------------------------ | ------------------------------------- | --------------------------- |
-| `fn` `let` `return` `if` `for` `in` `where` `to` `save` ... | `keyword`                 | `@keyword`                  |
-| `query` `search` `load` `create` `copy` `transform` | `function` + `defaultLibrary` | `@function.builtin`     |
+| `fn` `let` `return` `if` `for` `in` `saved` `where` `select` `order` `group` `by` `asc` `desc` `limit` `first` `or` `try` `catch` `finally` `to` `save` ... | `keyword`         | `@keyword`                  |
+| `query` `search` `load` `create` `copy` `transform`, and `sum` `count` `min` `max` `avg` in a `select` | `function` + `defaultLibrary` | `@function.builtin`     |
 | `log` / `log.debug`                        | `namespace` / `method` + `defaultLibrary` | `@variable` / `@function.method` |
 | `string` `number` `boolean`                | `type` + `defaultLibrary`             | `@type.builtin`             |
 | `Customer` `SalesOrder`, also in `Customer(123)` | `struct`                        | `@type`                     |
@@ -1223,8 +1799,21 @@ Search predicates are translated in `src/semantic/search.ts`.
 | MYNT1044 | Record argument whose origin the callee's effects forbid  |
 | MYNT1045 | Record id that is not a string or number                  |
 | MYNT1046 | Assign, `save`, or `delete` through a record reference or projection |
-| MYNT1047 | Field listed twice in a projection                        |
+| MYNT1047 | Field listed twice in a projection, `select`, or `group by` |
 | MYNT1048 | `[...]` on a value that is not a reference, record, or row |
 | MYNT1049 | Search condition `N/search` cannot express                |
 | MYNT1050 | Member of a projection that was not projected             |
+| MYNT1051 | `.text` on a reference that carries no display text        |
+| MYNT1052 | Saved search named by something other than a string         |
+| MYNT1053 | Relationship that cannot be joined: multiselect, second hop, or the `query` backend |
+| MYNT1054 | Saved search whose result type the snapshot cannot infer (unknown or dynamic id) |
+| MYNT1055 | Explicit saved-search type that contradicts the account snapshot |
+| MYNT1056 | Search clause (`where`, `select`, `order by`, `group by`, `limit`, `first`) written twice |
+| MYNT1057 | Search clause that cannot be honored: a non-field in `select`/`order by`/`group by`, an unsortable or ungroupable key, a bad `limit` count, `first` with `limit`, or a summary sort key that is not a result field |
+| MYNT1058 | Member read from an optional row (`first`) that was neither resolved with `or` nor tested with `if` |
+| MYNT1059 | `or` on a value that is not optional                        |
+| MYNT1060 | `or` block with a path that does not `return`              |
+| MYNT1061 | Selected field of a summary search that is neither grouped nor aggregated |
+| MYNT1062 | Aggregate problem: unnamed, unknown, or over a field of the wrong type |
+| MYNT1063 | Result name problem: repeated, over a selected field, or used as a source name in `where`, `group by`, or an aggregate |
 | MYNT2001 | Warning: loaded record modified on a path with no later `save` |

@@ -3,10 +3,10 @@ load, create, copy, transform
 ================================================================================
 
 scheduled {
-    let a = load Customer("123")
+    let a = load Customer(123)
     let b = create Customer
-    let c = copy Customer("123")
-    let d = transform SalesOrder("123") to Invoice
+    let c = copy Customer(123)
+    let d = transform SalesOrder(123) to Invoice
     save a
     save b
     save c
@@ -24,7 +24,7 @@ scheduled {
           function: (identifier)
           type: (type_identifier)
           arguments: (arguments
-            (string))))
+            (number))))
       (let_statement
         name: (identifier)
         value: (call_expression
@@ -36,14 +36,14 @@ scheduled {
           function: (identifier)
           type: (type_identifier)
           arguments: (arguments
-            (string))))
+            (number))))
       (let_statement
         name: (identifier)
         value: (call_expression
           function: (identifier)
           type: (type_identifier)
           arguments: (arguments
-            (string))
+            (number))
           target: (type_identifier)))
       (save_statement
         target: (identifier))

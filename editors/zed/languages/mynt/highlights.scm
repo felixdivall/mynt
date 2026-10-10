@@ -19,7 +19,19 @@
   "else"
   "for"
   "in"
+  "saved"
   "where"
+  "select"
+  "order"
+  "group"
+  "by"
+  "asc"
+  "desc"
+  "limit"
+  "or"
+  "try"
+  "catch"
+  "finally"
   "save"
   "delete"
   "add"
@@ -28,6 +40,9 @@
   "return"
 ] @keyword
 
+; `first` is a clause of one word, so its node is the keyword.
+(first_clause) @keyword
+
 ; Event filters are members of a fixed set.
 (event_filter (identifier) @constant)
 
@@ -35,14 +50,22 @@
 (type_identifier) @type
 (primitive_type) @type.builtin
 
-; Members, and the fields a projection names: `ref[email, comments]`.
+; Members, the fields a projection names (`ref[email, comments]`), and the fields a search clause names.
 (member_expression property: (identifier) @property)
 (projection_fields field: (identifier) @property)
+(select_clause field: (identifier) @property)
+(sort_key field: (identifier) @property)
+(group_clause field: (identifier) @property)
+
+; A summary's aggregates: the result name is a property the row exposes, the aggregate a builtin operation like `search`.
+(aggregate_item alias: (identifier) @property)
+(aggregate_function) @function.builtin
 
 ; Declarations and calls.
 (function_declaration name: (identifier) @function)
 (parameter name: (identifier) @variable.parameter)
 (let_statement name: (identifier) @variable)
+(try_statement binding: (identifier) @variable)
 (for_statement variable: (identifier) @variable)
 (call_expression function: (identifier) @function)
 (call_expression function: (member_expression property: (identifier) @function.method))
@@ -53,6 +76,8 @@
 ; server sends (`function` + `defaultLibrary`); `where` and `to` stay keywords.
 ((call_expression function: (identifier) @function.builtin type: (type_identifier))
   (#match? @function.builtin "^(query|search|load|create|copy|transform)$"))
+((saved_search function: (identifier) @function.builtin)
+  (#match? @function.builtin "^search$"))
 
 ; `Customer(123)` is a record reference, not a call: the callee is a record
 ; type. The grammar cannot consult the schema, so the fallback uses Mynt's
@@ -65,6 +90,8 @@
   "="
   "=="
   "!="
+  "==="
+  "!=="
   "<"
   "<="
   ">"

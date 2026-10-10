@@ -1,0 +1,203 @@
+================================================================================
+or return and or block after first
+================================================================================
+
+scheduled {
+    let account = search Customer
+        where email === "x"
+        select comments
+        first
+        or return
+    let other = search Customer
+        first
+        or {
+            log.error("missing")
+            return
+        }
+    log.debug(account.comments)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (or_expression
+          value: (query_expression
+            query: (call_expression
+              function: (identifier)
+              type: (type_identifier))
+            clause: (where_clause
+              condition: (binary_expression
+                left: (identifier)
+                right: (string)))
+            clause: (select_clause
+              field: (identifier))
+            clause: (first_clause))
+          branch: (return_statement)))
+      (let_statement
+        name: (identifier)
+        value: (or_expression
+          value: (query_expression
+            query: (call_expression
+              function: (identifier)
+              type: (type_identifier))
+            clause: (first_clause))
+          branch: (block
+            (expression_statement
+              (call_expression
+                function: (member_expression
+                  object: (identifier)
+                  property: (identifier))
+                arguments: (arguments
+                  (string))))
+            (return_statement))))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (member_expression
+              object: (identifier)
+              property: (identifier))))))))
+
+================================================================================
+try catch finally, with and without a binding
+================================================================================
+
+scheduled {
+    try {
+        let c = load Customer(1)
+    } catch err {
+        log.error(err)
+    } finally {
+        log.debug("done")
+    }
+    try {
+        save c
+    } catch {
+        log.error("failed")
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (try_statement
+        body: (block
+          (let_statement
+            name: (identifier)
+            value: (call_expression
+              function: (identifier)
+              type: (type_identifier)
+              arguments: (arguments
+                (number)))))
+        binding: (identifier)
+        handler: (block
+          (expression_statement
+            (call_expression
+              function: (member_expression
+                object: (identifier)
+                property: (identifier))
+              arguments: (arguments
+                (identifier)))))
+        finalizer: (block
+          (expression_statement
+            (call_expression
+              function: (member_expression
+                object: (identifier)
+                property: (identifier))
+              arguments: (arguments
+                (string))))))
+      (try_statement
+        body: (block
+          (save_statement
+            target: (identifier)))
+        handler: (block
+          (expression_statement
+            (call_expression
+              function: (member_expression
+                object: (identifier)
+                property: (identifier))
+              arguments: (arguments
+                (string)))))))))
+
+================================================================================
+or and try are identifiers elsewhere, and || is still boolean or
+================================================================================
+
+scheduled {
+    let or = true
+    let try = or || false
+    log.debug("x")
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (boolean))
+      (let_statement
+        name: (identifier)
+        value: (binary_expression
+          left: (identifier)
+          right: (boolean)))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (string)))))))
+
+================================================================================
+cut-off or and try keep the next statement
+================================================================================
+
+scheduled {
+    let a = search Customer
+        first
+        or
+    try {
+        log.debug("x")
+    }
+    log.debug("next")
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (first_clause)))
+      (ERROR)
+      (try_statement
+        body: (block
+          (expression_statement
+            (call_expression
+              function: (member_expression
+                object: (identifier)
+                property: (identifier))
+              arguments: (arguments
+                (string))))))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (string)))))))

@@ -1,0 +1,42 @@
+// Search clauses describe one search and may appear in any order. `select`
+// is optional: without it, Mynt plans the columns from the fields the loop
+// reads; with it, the rows expose exactly the selected fields (and `id`).
+scheduled {
+    // Inferred columns: the loop reads memo, so memo is the one column fetched.
+    let reviewed = search SalesOrder
+        where memo !== ""
+
+    for order in reviewed {
+        log.debug(order.memo)
+    }
+
+    // Explicit selection, ordered, limited: a sequence of at most ten rows.
+    // `total` is sorted on but not exposed.
+    let largest = search SalesOrder
+        select memo
+        where total > 1000
+        order by total desc
+        limit 10
+
+    for order in largest {
+        log.debug(order.memo)
+    }
+
+    // The same search with its clauses in another order: identical semantics.
+    let again = search SalesOrder
+        limit 10
+        order by total desc
+        select memo
+        where total > 1000
+
+    for order in again {
+        log.debug(order.id)
+    }
+
+    // `first` is one optional row, not a sequence: the first row under the
+    // effective ordering, or none. Reading from it awaits an unwrapping form.
+    let latest = search SalesOrder
+        where total > 1000
+        order by total desc
+        first
+}

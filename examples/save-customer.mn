@@ -1,5 +1,5 @@
 scheduled {
-    let customer = load Customer("123")
+    let customer = load Customer(123)
 
     customer.comments = "Updated by Mynt"
 

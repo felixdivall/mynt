@@ -1,0 +1,232 @@
+================================================================================
+search clauses in any order
+================================================================================
+
+scheduled {
+    let a = search SalesOrder
+        select tranid, amount
+        where amount > 1000
+        order by trandate desc
+    let b = search SalesOrder
+        order by trandate desc, amount
+        where amount > 1000
+        select tranid, entity.email
+        limit 100
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (select_clause
+            field: (identifier)
+            field: (identifier))
+          clause: (where_clause
+            condition: (binary_expression
+              left: (identifier)
+              right: (number)))
+          clause: (order_clause
+            key: (sort_key
+              field: (identifier)))))
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (order_clause
+            key: (sort_key
+              field: (identifier))
+            key: (sort_key
+              field: (identifier)))
+          clause: (where_clause
+            condition: (binary_expression
+              left: (identifier)
+              right: (number)))
+          clause: (select_clause
+            field: (identifier)
+            field: (member_expression
+              object: (identifier)
+              property: (identifier)))
+          clause: (limit_clause
+            count: (number)))))))
+
+================================================================================
+repeated clauses parse; the compiler reports them
+================================================================================
+
+scheduled {
+    let a = search SalesOrder
+        where amount > 1000
+        where memo !== ""
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (where_clause
+            condition: (binary_expression
+              left: (identifier)
+              right: (number)))
+          clause: (where_clause
+            condition: (binary_expression
+              left: (identifier)
+              right: (string))))))))
+
+================================================================================
+clauses cut short keep the next statement
+================================================================================
+
+scheduled {
+    let a = search SalesOrder
+        select
+    let c = search SalesOrder
+        order
+    let d = search SalesOrder
+        order by
+    let e = search SalesOrder
+        order by trandate
+    log.debug("next")
+    let b = search SalesOrder
+        select tranid,
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (select_clause)))
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (order_clause)))
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (order_clause)))
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (order_clause
+            key: (sort_key
+              field: (identifier)))))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (string))))
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (select_clause
+            field: (identifier))))
+      (ERROR))))
+
+================================================================================
+clause words are identifiers elsewhere
+================================================================================
+
+scheduled {
+    let select = "x"
+    let order = select
+    let first = order
+    log.debug(first)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (string))
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (let_statement
+        name: (identifier)
+        value: (identifier))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (identifier)))))))
+
+================================================================================
+first is a clause in any position
+================================================================================
+
+scheduled {
+    let a = search SalesOrder
+        first
+        where amount > 1000
+    let b = search SalesOrder
+        order by trandate desc
+        first
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (first_clause)
+          clause: (where_clause
+            condition: (binary_expression
+              left: (identifier)
+              right: (number)))))
+      (let_statement
+        name: (identifier)
+        value: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier))
+          clause: (order_clause
+            key: (sort_key
+              field: (identifier)))
+          clause: (first_clause))))))

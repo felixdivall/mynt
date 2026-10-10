@@ -93,3 +93,41 @@ scheduled {
               function: (identifier)
               arguments: (arguments
                 (number)))))))))
+
+================================================================================
+strict and loose equality are distinct operators at one precedence
+================================================================================
+
+scheduled {
+    if a === "x" || b !== 1 && c == d {
+        log.debug(e != f)
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (if_statement
+        condition: (binary_expression
+          left: (binary_expression
+            left: (identifier)
+            right: (string))
+          right: (binary_expression
+            left: (binary_expression
+              left: (identifier)
+              right: (number))
+            right: (binary_expression
+              left: (identifier)
+              right: (identifier))))
+        consequence: (block
+          (expression_statement
+            (call_expression
+              function: (member_expression
+                object: (identifier)
+                property: (identifier))
+              arguments: (arguments
+                (binary_expression
+                  left: (identifier)
+                  right: (identifier))))))))))

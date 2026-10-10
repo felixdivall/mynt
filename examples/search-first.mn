@@ -1,0 +1,27 @@
+// Expected absence and runtime failure are different things.
+//
+// `first` gives one optional row, `Customer?`. `or` resolves it where it
+// arises: if there is no row, the branch leaves; otherwise the local is a
+// plain `Customer` row. `try`/`catch` is for operations that throw, such
+// as loading a record that does not exist; a search with no rows is not a
+// failure and never reaches `catch`.
+scheduled {
+    let customer = search Customer
+        where email === "owner@example.com"
+        select comments
+        first
+        or {
+            log.error("No customer owns that address")
+            return
+        }
+
+    log.debug(customer.comments)
+
+    try {
+        let record = load Customer(customer.id)
+        record.comments = "Reviewed by Mynt"
+        save record
+    } catch err {
+        log.error(err)
+    }
+}

@@ -10,7 +10,7 @@
 //   email memo quantity              property
 
 fn needsReview(memo: string): boolean {
-    return memo == "" || memo == "TBD"
+    return memo === "" || memo === "TBD"
 }
 
 fn calculate(value: number, multiplier: number): number {
@@ -35,8 +35,8 @@ beforeSubmit create | edit (order: SalesOrder) {
 
     // Query syntax: keyword positions, query fields, a multi-line where.
     let customers = query Customer
-        where email != "" &&
-            comments != ""
+        where email !== "" &&
+            comments !== ""
 
     for row in customers {
         let customer = load Customer(row.id)
@@ -49,9 +49,9 @@ beforeSubmit create | edit (order: SalesOrder) {
     // A record reference, single- and multi-field lookups, and a search.
     let reference = Customer(123)
     let address = reference[email]
-    let info = Customer("123")[email, comments]
+    let info = Customer(123)[email, comments]
     log.debug(info.comments)
-    for found in search Customer where email != "" {
+    for found in search Customer where email !== "" {
         log.debug(found.id)
     }
 
@@ -59,14 +59,14 @@ beforeSubmit create | edit (order: SalesOrder) {
     let fresh = create Customer
     fresh.email = "new@example.com"
     save fresh
-    let duplicate = copy Customer("123")
+    let duplicate = copy Customer(123)
     save duplicate
-    let invoice = transform SalesOrder("123") to Invoice
+    let invoice = transform SalesOrder(123) to Invoice
     save invoice
 
     // Sublist, line variable, and line fields.
     for line in order.item {
-        if line.quantity == 0 {
+        if line.quantity === 0 {
             remove line
         }
     }

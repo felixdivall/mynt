@@ -3,8 +3,8 @@
 // a record, load it by the row's id.
 scheduled {
     let customers = search Customer
-        where email != "" &&
-            comments == ""
+        where email !== "" &&
+            comments === ""
 
     for row in customers {
         log.debug(row.email)

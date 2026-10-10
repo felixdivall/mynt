@@ -21,11 +21,19 @@ import {
   type IfStatement,
   type LetStatement,
   type NumberLiteral,
+  type OrExpression,
   type Parameter,
   type ProjectionExpression,
   type QueryExpression,
   type QueryOperation,
+  type SavedSearchClause,
+  type SearchClause,
+  type SelectItem,
+  type AggregateCall,
+  type SortKey,
   QUERY_OPERATIONS,
+  AGGREGATE_FUNCTIONS,
+  SEARCH_CLAUSE_KEYWORDS,
   type RemoveStatement,
   type ReturnStatement,
   type SaveStatement,
@@ -33,6 +41,7 @@ import {
   type SourceFile,
   type Statement,
   type StringLiteral,
+  type TryStatement,
   type UnaryExpression,
   type UserEventDeclaration,
   type UserEventHook,
@@ -65,6 +74,8 @@ const TOKEN_DESCRIPTIONS: Record<TokenKind, string> = {
   Comma: "','",
   EqualsEquals: "'=='",
   BangEquals: "'!='",
+  EqualsEqualsEquals: "'==='",
+  BangEqualsEquals: "'!=='",
   Bang: "'!'",
   AmpAmp: "'&&'",
   PipePipe: "'||'",
@@ -96,11 +107,16 @@ const BINARY_OPERATORS: Partial<Record<TokenKind, BinaryOperatorInfo>> = {
   AmpAmp: { operator: "&&", precedence: 2, associativity: "left" },
   EqualsEquals: { operator: "==", precedence: 3, associativity: "none" },
   BangEquals: { operator: "!=", precedence: 3, associativity: "none" },
+  EqualsEqualsEquals: { operator: "===", precedence: 3, associativity: "none" },
+  BangEqualsEquals: { operator: "!==", precedence: 3, associativity: "none" },
   Less: { operator: "<", precedence: 4, associativity: "none" },
   LessEquals: { operator: "<=", precedence: 4, associativity: "none" },
   Greater: { operator: ">", precedence: 4, associativity: "none" },
   GreaterEquals: { operator: ">=", precedence: 4, associativity: "none" },
 };
+
+/** Words that begin a statement; a comma-separated list cut short at a line's end stops before one. */
+const STATEMENT_START_WORDS: readonly string[] = ["let", "if", "for", "save", "delete", "remove", "add", "return"];
 
 /** Tokens that can begin an expression. */
 const EXPRESSION_START = new Set<TokenKind>(["Identifier", "String", "Number", "LParen", "Bang"]);
@@ -143,8 +159,9 @@ function describe(token: Token): string {
  *   Parameter   := Identifier ":" Identifier
  *   Block       := "{" Statement* "}"
  *   Statement   := LetStatement | SaveStatement | DeleteStatement | RemoveStatement | AddStatement | ReturnStatement
- *                | IfStatement | ForStatement | Expression ("=" Expression)? Terminator?
- *   LetStatement:= "let" Identifier "=" Expression Terminator?
+ *                | IfStatement | ForStatement | TryStatement | Expression ("=" Expression)? Terminator?
+ *   TryStatement:= "try" Block ("catch" Identifier? Block)? ("finally" Block)?
+ *   LetStatement:= "let" Identifier "=" Expression (Terminator? "or" ("return" Expression? | Block))? Terminator?
  *   SaveStatement:= "save" Expression Terminator?
  *   DeleteStatement:= "delete" Expression Terminator?
  *   RemoveStatement:= "remove" Expression Terminator?
@@ -154,14 +171,17 @@ function describe(token: Token): string {
  *   ForStatement:= "for" Identifier "in" Expression Block Terminator?
  *   Expression  := Binary
  *   Binary      := Unary (BinaryOperator Unary)*            (precedence climbing; see BINARY_OPERATORS)
- *   BinaryOperator := "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
+ *   BinaryOperator := "||" | "&&" | "==" | "!=" | "===" | "!==" | "<" | "<=" | ">" | ">="
  *   Unary       := "!" Unary | Postfix
  *   Postfix     := Primary ("." Identifier | TypeArgument ("(" Arguments ")")? ("to" TypeArgument)? | "(" Arguments ")" | Projection)*
  *   Projection  := "[" Identifier ("," Identifier)* "]"
  *   TypeArgument:= Identifier
  *   Arguments   := (Expression ("," Expression)*)?
  *   Primary     := Identifier | String | Number | "true" | "false" | "(" Expression ")" | Query
- *   Query       := ("query" | "search") Identifier (Terminator? "where" Expression)?
+ *   Query       := ("query" | "search") (Identifier | "saved" Identifier? (String | Identifier)) (Terminator? Clause)*
+ *   Clause      := "where" Expression | "select" FieldPath ("," FieldPath)* | "order" "by" SortKey ("," SortKey)* | "limit" Primary | "first"
+ *   SortKey     := FieldPath ("asc" | "desc")?
+ *   FieldPath   := Identifier ("." Identifier)*
  *
  * Declaration keywords, `let`, `save`, `if`, `else`, event names, and built-in
  * names are contextual: they are ordinary identifiers that the parser
@@ -236,6 +256,17 @@ class Parser {
       }
       this.next();
     }
+  }
+
+  /** Skip `( ... )`, nested parentheses included. */
+  private skipBalancedParens(): void {
+    let depth = 0;
+    do {
+      const kind = this.next().kind;
+      if (kind === "LParen") depth++;
+      else if (kind === "RParen") depth--;
+      else if (kind === "EOF" || kind === "Terminator") return;
+    } while (depth > 0);
   }
 
   private skipBalancedBlock(): void {
@@ -429,6 +460,10 @@ class Parser {
     }
     // `return` always begins a statement, so `return (a || b)` is a return, not a call.
     if (this.at("Identifier") && this.peek().text === "return") return this.parseReturn();
+    if (this.at("Identifier") && this.peek().text === "try" && this.peek(1).kind === "LBrace") return this.parseTry();
+    if (this.at("Identifier") && (this.peek().text === "catch" || this.peek().text === "finally") && (this.peek(1).kind === "LBrace" || this.peek(1).kind === "Identifier")) {
+      this.fail(`'${this.peek().text}' must be on the same line as the '}' that closes the try block: write '} ${this.peek().text}${this.peek().text === "catch" ? " err" : ""} {'`, this.peek().span);
+    }
     if (this.at("Identifier") && this.peek().text === "if" && !EXPRESSION_CONTINUATION.has(this.peek(1).kind)) {
       return this.parseIf();
     }
@@ -471,7 +506,7 @@ class Parser {
       );
     }
     this.next();
-    const initializer = this.parseExpression();
+    const initializer = this.parseOrExpression();
     return {
       kind: "LetStatement",
       keywordSpan: keyword.span,
@@ -479,6 +514,50 @@ class Parser {
       initializer,
       span: spanFrom(keyword.span, initializer.span),
     };
+  }
+
+  /**
+   * An expression, then optionally `or return` / `or { ... }` resolving it
+   * as an optional. `or` may begin the next line (after a search's last
+   * clause, typically) and is a resolution only when `return` or `{`
+   * follows; otherwise the word is left for whatever comes next.
+   */
+  private parseOrExpression(): Expression {
+    const value = this.parseExpression();
+    const at = this.at("Terminator") ? 1 : 0;
+    const word = this.peek(at);
+    if (word.kind !== "Identifier" || word.text !== "or") return value;
+    const after = this.peek(at + 1);
+    if (!(after.kind === "Identifier" && after.text === "return") && after.kind !== "LBrace") {
+      // `or` with something else after it. On the value's own line it can only be a resolution, so it is one that
+      // is malformed (`x or y` is not a fallback); on the next line it is a resolution only when cut short there,
+      // and otherwise the word is left to begin the next statement.
+      const cutShort = after.kind === "Terminator" || after.kind === "EOF" || after.kind === "RBrace";
+      if (at === 0 || cutShort) {
+        if (at === 1) this.next();
+        const orSpan = this.next().span;
+        this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected 'return' or '{' after 'or', found ${describe(this.peek())}`, this.peek().span);
+        // Skip the rest of the line; the statement's own terminator stays for the caller.
+        while (!this.at("Terminator") && !this.at("EOF") && !this.at("RBrace")) {
+          if (this.at("LBrace")) this.skipBalancedBlock();
+          else this.next();
+        }
+        const branch: Block = { kind: "Block", statements: [], span: orSpan };
+        return { kind: "OrExpression", value, orSpan, branch, span: spanFrom(value.span, orSpan) };
+      }
+      return value;
+    }
+    if (at === 1) this.next();
+    const orSpan = this.next().span;
+    let branch: Block;
+    if (this.at("LBrace")) {
+      branch = this.parseBlock("the or block");
+    } else {
+      const statement = this.parseReturn();
+      branch = { kind: "Block", statements: [statement], span: statement.span };
+    }
+    const resolved: OrExpression = { kind: "OrExpression", value, orSpan, branch, span: spanFrom(value.span, branch.span) };
+    return resolved;
   }
 
   private parseRecordStatement(): SaveStatement | DeleteStatement | RemoveStatement {
@@ -498,6 +577,33 @@ class Parser {
       case "remove":
         return { kind: "RemoveStatement", keywordSpan: keyword.span, target, span };
     }
+  }
+
+  private parseTry(): TryStatement {
+    const keyword = this.next();
+    const body = this.parseBlock("the try block");
+    let catchSpan: Span | undefined;
+    let binding: Identifier | undefined;
+    let handler: Block | undefined;
+    let finallySpan: Span | undefined;
+    let finalizer: Block | undefined;
+    if (this.at("Identifier") && this.peek().text === "catch") {
+      catchSpan = this.next().span;
+      if (this.at("Identifier")) binding = this.parseBindingName("as the error name after 'catch'");
+      if (!this.at("LBrace")) {
+        this.fail(`Expected '{' after 'catch${binding ? ` ${binding.name}` : ""}', found ${describe(this.peek())}`, this.peek().span);
+      }
+      handler = this.parseBlock("the catch block");
+    }
+    if (this.at("Identifier") && this.peek().text === "finally") {
+      finallySpan = this.next().span;
+      if (!this.at("LBrace")) this.fail(`Expected '{' after 'finally', found ${describe(this.peek())}`, this.peek().span);
+      finalizer = this.parseBlock("the finally block");
+    }
+    if (!handler && !finalizer) {
+      this.fail("A 'try' needs a 'catch' (or 'finally') on the same line as its closing '}': write '} catch err {'", this.peek().span);
+    }
+    return { kind: "TryStatement", keywordSpan: keyword.span, body, catchSpan, binding, handler, finallySpan, finalizer, span: spanFrom(keyword.span, (finalizer ?? handler ?? body).span) };
   }
 
   private parseReturn(): ReturnStatement {
@@ -580,29 +686,237 @@ class Parser {
 
   private parseQuery(operation: QueryOperation): QueryExpression {
     const keyword = this.next();
-    const recordType = this.parseIdentifier(`as the record type to ${operation}`);
-    let condition: Expression | undefined;
-    let whereSpan: Span | undefined;
-    // `where` may start the next line: look past one terminator for it.
-    const whereAt = this.at("Terminator") ? 1 : 0;
-    const where = this.peek(whereAt);
-    if (where.kind === "Identifier" && where.text === "where") {
-      if (whereAt === 1) this.next();
-      whereSpan = this.next().span;
-      if (!EXPRESSION_START.has(this.peek().kind)) {
-        this.fail(`Expected a condition after 'where', found ${describe(this.peek())}`, this.peek().span);
+    let recordType: Identifier | undefined;
+    let saved: SavedSearchClause | undefined;
+    if (this.at("Identifier") && this.peek().text === "saved") {
+      // `saved "customsearch_x"` or `saved Customer "customsearch_x"`: a saved
+      // search. A name right after `saved` is the record type when an id
+      // follows it on the same line, otherwise it is the id itself (a local).
+      const savedKeyword = this.next();
+      if (operation !== "search") {
+        this.fail(`'saved' loads a saved search and belongs to 'search'; write 'search saved ...' (query is N/query, which has no saved searches)`, savedKeyword.span);
       }
-      condition = this.parseExpression();
+      saved = { kind: "SavedSearchClause", keywordSpan: savedKeyword.span, id: undefined, span: savedKeyword.span };
+      const next = this.peek(1);
+      if (this.at("Identifier") && this.peek().text !== "where" && (next.kind === "String" || (next.kind === "Identifier" && next.text !== "where"))) {
+        recordType = this.parseIdentifier();
+      }
+      if (this.at("String") || (this.at("Identifier") && this.peek().text !== "where")) {
+        saved.id = this.parsePrimary();
+        saved.span = spanFrom(savedKeyword.span, saved.id.span);
+      } else if (this.at("Number")) {
+        this.fail(
+          `A saved search is named by its script id, a string like "customsearch_active_customers", not a number; numeric internal ids are not accepted`,
+          this.peek().span,
+        );
+      } else {
+        // Report, and keep the search so what was written still binds while typing.
+        this.diagnostics.error(
+          DiagnosticCode.SyntaxError,
+          `Expected a saved search id after 'saved${recordType ? ` ${recordType.name}` : ""}', like "customsearch_active_customers", found ${describe(this.peek())}`,
+          this.peek().span,
+        );
+      }
+    } else {
+      recordType = this.parseIdentifier(`as the record type to ${operation}`);
+      if (this.at("Identifier") && this.peek().text === "using") {
+        // The pre-release spelling. Point at the current one rather than reporting a bare syntax error.
+        this.fail(`Saved searches are written 'search saved "customsearch_x"' (or 'search saved ${recordType.name} "customsearch_x"' to state the type); 'using' is no longer part of Mynt`, this.peek().span);
+      }
     }
+    // Clauses, in any order. Each may start the next line: look past one terminator for a clause word.
+    const clauses: SearchClause[] = [];
+    for (;;) {
+      const at = this.at("Terminator") ? 1 : 0;
+      const word = this.peek(at);
+      if (word.kind !== "Identifier" || !SEARCH_CLAUSE_KEYWORDS.includes(word.text)) break;
+      if (at === 1) this.next();
+      clauses.push(this.parseSearchClause());
+    }
+    const where = clauses.find((c): c is Extract<SearchClause, { kind: "WhereClause" }> => c.kind === "WhereClause");
+    const last = clauses[clauses.length - 1];
     return {
       kind: "QueryExpression",
       operation,
       keywordSpan: keyword.span,
       recordType,
-      whereSpan,
-      condition,
-      span: spanFrom(keyword.span, (condition ?? recordType).span),
+      saved,
+      clauses,
+      whereSpan: where?.keywordSpan,
+      condition: where?.condition,
+      span: spanFrom(keyword.span, (last ?? saved?.id ?? recordType ?? { span: saved?.keywordSpan ?? keyword.span }).span),
     };
+  }
+
+  private parseSearchClause(): SearchClause {
+    const word = this.next();
+    switch (word.text) {
+      case "where": {
+        if (!EXPRESSION_START.has(this.peek().kind)) {
+          this.fail(`Expected a condition after 'where', found ${describe(this.peek())}`, this.peek().span);
+        }
+        const condition = this.parseExpression();
+        return { kind: "WhereClause", keywordSpan: word.span, condition, span: spanFrom(word.span, condition.span) };
+      }
+      case "select": {
+        // Items, comma-separated; a line may continue after a comma. An
+        // empty list is reported and kept, so completion sees the clause.
+        const items: SelectItem[] = [];
+        if (this.at("Identifier")) {
+          for (;;) {
+            items.push(this.parseSelectItem());
+            if (!this.at("Comma")) break;
+            this.next();
+            // `name = aggregate(` or a bare `aggregate(` continues the list; neither is a statement on the next line.
+            const aliasNext = this.at("Identifier") && this.peek(1).kind === "Equals" && this.peek(2).kind === "Identifier" && this.peek(3).kind === "LParen";
+            const aggregateNext = this.at("Identifier") && AGGREGATE_FUNCTIONS.includes(this.peek().text) && this.peek(1).kind === "LParen";
+            if (!this.at("Identifier") || (this.atStatementStart() && !aliasNext && !aggregateNext)) {
+              this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected a field after ',' in 'select', found ${describe(this.peek())}`, this.peek().span);
+              break;
+            }
+          }
+        } else {
+          this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected the fields to select after 'select', like 'select tranid, amount', found ${describe(this.peek())}`, this.peek().span);
+        }
+        return { kind: "SelectClause", keywordSpan: word.span, items, span: spanFrom(word.span, (items[items.length - 1] ?? { span: word.span }).span) };
+      }
+      case "order": {
+        let bySpan: Span | undefined;
+        const keys: SortKey[] = [];
+        if (this.at("Identifier") && this.peek().text === "by") {
+          bySpan = this.next().span;
+          if (this.at("Identifier")) {
+            for (;;) {
+              const field = this.parseFieldPath();
+              let direction: SortKey["direction"];
+              let directionSpan: Span | undefined;
+              if (this.at("Identifier") && (this.peek().text === "asc" || this.peek().text === "desc")) {
+                const token = this.next();
+                direction = token.text as "asc" | "desc";
+                directionSpan = token.span;
+              }
+              keys.push({ kind: "SortKey", field, direction, directionSpan, span: spanFrom(field.span, directionSpan ?? field.span) });
+              if (!this.at("Comma")) break;
+              this.next();
+              if (!this.at("Identifier") || this.atStatementStart()) {
+                this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected a field after ',' in 'order by', found ${describe(this.peek())}`, this.peek().span);
+                break;
+              }
+            }
+          } else {
+            this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected a field to sort by after 'order by', like 'order by trandate desc', found ${describe(this.peek())}`, this.peek().span);
+          }
+        } else {
+          this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected 'by' after 'order', as in 'order by trandate desc', found ${describe(this.peek())}`, this.peek().span);
+        }
+        const end = keys[keys.length - 1]?.span ?? bySpan ?? word.span;
+        return { kind: "OrderByClause", keywordSpan: word.span, bySpan, keys, span: spanFrom(word.span, end) };
+      }
+      case "group": {
+        let bySpan: Span | undefined;
+        const fields: Expression[] = [];
+        if (this.at("Identifier") && this.peek().text === "by") {
+          bySpan = this.next().span;
+          if (this.at("Identifier")) {
+            for (;;) {
+              fields.push(this.parseFieldPath());
+              if (!this.at("Comma")) break;
+              this.next();
+              if (!this.at("Identifier") || this.atStatementStart()) {
+                this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected a field after ',' in 'group by', found ${describe(this.peek())}`, this.peek().span);
+                break;
+              }
+            }
+          } else {
+            this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected a field to group by after 'group by', like 'group by entity', found ${describe(this.peek())}`, this.peek().span);
+          }
+        } else {
+          this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected 'by' after 'group', as in 'group by entity', found ${describe(this.peek())}`, this.peek().span);
+        }
+        const end = fields[fields.length - 1]?.span ?? bySpan ?? word.span;
+        return { kind: "GroupByClause", keywordSpan: word.span, bySpan, fields, span: spanFrom(word.span, end) };
+      }
+      case "limit": {
+        let count: Expression | undefined;
+        if (EXPRESSION_START.has(this.peek().kind)) count = this.parsePrimary();
+        else this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected the number of rows after 'limit', like 'limit 100', found ${describe(this.peek())}`, this.peek().span);
+        return { kind: "LimitClause", keywordSpan: word.span, count, span: spanFrom(word.span, count?.span ?? word.span) };
+      }
+      case "first":
+        return { kind: "FirstClause", keywordSpan: word.span, span: word.span };
+      case "take":
+        // The pre-release spelling of `limit`.
+        this.fail("Search limits are written with 'limit', like 'limit 100'; 'take' is no longer part of Mynt (and 'first' returns one optional row)", word.span);
+      default:
+        throw new Error(`${word.text} is not a search clause`);
+    }
+  }
+
+  /**
+   * A list cut short at a line's end: the next line begins a statement
+   * rather than continuing the list. A statement word, or a name (with
+   * member accesses) that is called or assigned, is not a field.
+   */
+  private atStatementStart(): boolean {
+    const token = this.peek();
+    if (token.kind !== "Identifier") return false;
+    if (STATEMENT_START_WORDS.includes(token.text) && this.peek(1).kind !== "Comma" && this.peek(1).kind !== "Dot") return true;
+    let i = 1;
+    while (this.peek(i).kind === "Dot" && this.peek(i + 1).kind === "Identifier") i += 2;
+    return this.peek(i).kind === "LParen" || this.peek(i).kind === "Equals";
+  }
+
+  /**
+   * One `select` item: a field path, or `name = aggregate(field)`. The
+   * aggregate names are recognized only here, before `(`; `name = field`
+   * and a bare aggregate are kept with their parts so the binder can say
+   * what is missing.
+   */
+  private parseSelectItem(): SelectItem {
+    let alias: Identifier | undefined;
+    let equalsSpan: Span | undefined;
+    if (this.at("Identifier") && this.peek(1).kind === "Equals") {
+      alias = this.parseIdentifier("as the result name");
+      equalsSpan = this.next().span;
+    }
+    let value: Expression | AggregateCall;
+    if (this.at("Identifier") && AGGREGATE_FUNCTIONS.includes(this.peek().text) && this.peek(1).kind === "LParen") {
+      const name = this.parseIdentifier();
+      this.next(); // (
+      let argument: Expression | undefined;
+      if (this.at("Identifier")) argument = this.parseFieldPath();
+      else if (!this.at("RParen")) {
+        this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected a field inside '${name.name}(...)', like '${name.name}(amount)', found ${describe(this.peek())}`, this.peek().span);
+      }
+      let closeSpan: Span | undefined;
+      if (this.at("RParen")) closeSpan = this.next().span;
+      else this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected ')' to close '${name.name}(', found ${describe(this.peek())}`, this.peek().span);
+      value = { kind: "AggregateCall", function: name, argument, closeSpan, span: spanFrom(name.span, closeSpan ?? argument?.span ?? name.span) };
+    } else if (this.at("Identifier") && this.peek(1).kind === "LParen") {
+      // A call that is not an aggregate: name the aggregates, and skip the call so the clause ends cleanly.
+      const name = this.parseIdentifier();
+      this.diagnostics.error(DiagnosticCode.InvalidAggregate, `'${name.name}' is not an aggregate; 'select' aggregates with sum, count, min, max, and avg`, name.span);
+      this.skipBalancedParens();
+      value = { kind: "Identifier", name: "", span: name.span };
+    } else if (this.at("Identifier")) {
+      value = this.parseFieldPath();
+    } else {
+      this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected an aggregate after '${alias?.name ?? ""} =', like '${alias?.name ?? "total"} = sum(amount)', found ${describe(this.peek())}`, this.peek().span);
+      value = { kind: "Identifier", name: "", span: this.peek().span };
+    }
+    const start = alias?.span ?? value.span;
+    return { kind: "SelectItem", alias, equalsSpan, value, span: spanFrom(start, value.span) };
+  }
+
+  /** `field` or `field.field` in a `select` or `order by`: a path of names, never a call, so a following `asc`/`desc` is not read as a type argument. */
+  private parseFieldPath(): Expression {
+    let expression: Expression = this.parseIdentifier("as a field");
+    while (this.at("Dot")) {
+      this.next();
+      const property = this.parseIdentifier("after '.'");
+      expression = { kind: "MemberExpression", object: expression, property, span: spanFrom(expression.span, property.span) };
+    }
+    return expression;
   }
 
   /** A statement ends at a terminator, or right before the closing brace (or the end of an unclosed file). */
@@ -737,7 +1051,7 @@ class Parser {
       } else if (this.at("LBracket")) {
         expression = this.parseProjection(expression);
       } else if (this.at("String") && this.peek(1).kind === "LParen") {
-        // `load "Customer"("123")`: a quoted name where a record type belongs.
+        // `load "Customer"(123)`: a quoted name where a record type belongs.
         const token = this.peek();
         this.fail(
           `Expected a record type name before the argument list, found string ${token.text}. ` +

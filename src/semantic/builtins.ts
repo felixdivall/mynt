@@ -19,22 +19,23 @@ import type { MyntType } from "./types.js";
 export type NetSuiteModule = "N/log" | "N/record" | "N/query" | "N/search";
 
 /**
- * What a built-in parameter accepts. `RecordId` is an internal id, which
- * NetSuite takes as a string or a number: `load Customer(123)` and
- * `load Customer("123")` are both valid. It is not a Mynt type and there is
- * no union syntax; the binder simply accepts either primitive here.
+ * What a built-in parameter accepts. `RecordId` is an internal id, written
+ * as a number, `load Customer(123)`, or as a string, `load Customer("123")`.
+ * It is not a Mynt type and there is no union syntax; the binder simply
+ * accepts either primitive here, and the emitter passes the id as written.
  */
-export type BuiltinParameter = FieldType | "RecordId";
+export type BuiltinParameter = FieldType | "RecordId" | "Loggable";
 
-/** Whether a value of `actual` may be passed where `expected` is declared. */
+/** Whether a value of `actual` may be passed where `expected` is declared. `Loggable` is a string or a caught Error, which N/log prints as it is. */
 export function acceptsArgument(expected: BuiltinParameter, actual: MyntType): boolean {
   if (expected === "RecordId") return actual === "Text" || actual === "Number";
+  if (expected === "Loggable") return actual === "Text" || actual === "Error";
   return actual === expected;
 }
 
-/** The spelling of a parameter in signatures and diagnostics: `string`, or `string | number` for a record id. */
+/** The spelling of a parameter in signatures and diagnostics: `string`, or `string | number` for a record id. A log message reads as `string`; that a caught Error is accepted too is documented, not spelled. */
 export function parameterTypeName(parameter: BuiltinParameter): string {
-  return parameter === "RecordId" ? "string | number" : typeName(parameter);
+  return parameter === "RecordId" ? "string | number" : parameter === "Loggable" ? "string" : typeName(parameter);
 }
 
 export type BuiltinId = "log.debug" | "log.audit" | "log.error" | "log.emergency" | "load" | "create" | "copy" | "transform";
@@ -90,7 +91,7 @@ function logMethod(level: "debug" | "audit" | "error" | "emergency"): Builtin {
     name: `log.${level}`,
     module: "N/log",
     kind: "function",
-    parameters: ["Text"],
+    parameters: ["Loggable"],
     parameterNames: ["message"],
     summary: `Writes a ${level} entry to the NetSuite execution log.`,
     returns: "Void",
@@ -106,7 +107,7 @@ const LOG_NAMESPACE: BuiltinNamespace = {
   ),
 };
 
-/** `load Customer("123")`: N/record `record.load`, returning the named record type. */
+/** `load Customer(123)`: N/record `record.load`, returning the named record type. */
 const LOAD: Builtin = {
   id: "load",
   name: "load",
@@ -134,7 +135,7 @@ const CREATE: Builtin = {
   result: "new",
 };
 
-/** `copy Customer("123")`: N/record `record.copy`. A new, unsaved copy of an existing record. */
+/** `copy Customer(123)`: N/record `record.copy`. A new, unsaved copy of an existing record. */
 const COPY: Builtin = {
   id: "copy",
   name: "copy",
@@ -149,7 +150,7 @@ const COPY: Builtin = {
 };
 
 /**
- * `transform SalesOrder("123") to Invoice`: N/record `record.transform`. A
+ * `transform SalesOrder(123) to Invoice`: N/record `record.transform`. A
  * new, unsaved record of the target type derived from the source. NetSuite
  * permits only certain source/target pairs; Mynt does not check the pair,
  * so an unsupported one fails at runtime.

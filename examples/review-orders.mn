@@ -1,13 +1,13 @@
 fn removeEmptyLines(order: SalesOrder) {
     for line in order.item {
-        if line.quantity == 0 {
+        if line.quantity === 0 {
             remove line
         }
     }
 }
 
 fn needsReview(memo: string): boolean {
-    return memo == "" || memo == "TBD"
+    return memo === "" || memo === "TBD"
 }
 
 scheduled {

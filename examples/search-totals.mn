@@ -1,0 +1,32 @@
+// A summary search: one row per group, with named aggregates.
+//
+// `where` filters the source rows, `group by` defines the buckets, `select`
+// names the grouped fields and the aggregates, `order by` may sort by a
+// result name, and `limit`/`first` bound the summary rows. The clauses
+// may appear in any order. Each row exposes exactly the result fields:
+// `entity` is the grouped reference (id and text), `total` the sum.
+scheduled {
+    let totals = search SalesOrder
+        where mainline === true
+        group by entity
+        select entity, total = sum(amount)
+        order by total desc
+        limit 10
+
+    for row in totals {
+        log.audit(row.entity.text)
+        if row.total > 10000 {
+            log.audit("A top customer")
+        }
+    }
+
+    let overall = search SalesOrder
+        where mainline === true
+        select orders = count(), total = sum(amount)
+        first
+        or return
+
+    if overall.orders === 0 {
+        log.audit("No orders")
+    }
+}

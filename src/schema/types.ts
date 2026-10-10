@@ -16,8 +16,11 @@
  *                        accepts one yet, so such a field is inert until the
  *                        language grows a Date type.
  *   Ref                  a reference to another record (a select field).
- *                        Readable and inert for now; `refTarget` names the
- *                        target when the metadata does.
+ *                        `refTarget` names the target record type when the
+ *                        metadata does and `selection` says whether the
+ *                        field holds one reference or several. With a known
+ *                        target the value is a typed reference (`Ref<T>`);
+ *                        without one it is inert: readable, accepted nowhere.
  *   Unknown              the metadata did not say enough to type the field.
  *                        Inert: it can be read, but nothing accepts it.
  *
@@ -27,6 +30,9 @@
 export type FieldType = "Text" | "Number" | "Bool" | "Date" | "Ref" | "Unknown";
 
 export const FIELD_TYPES: readonly FieldType[] = ["Text", "Number", "Bool", "Date", "Ref", "Unknown"];
+
+/** How many references a Ref field holds: one (a select) or several (a multiselect). */
+export type FieldSelection = "single" | "multiple";
 
 export interface FieldSchema {
   /** NetSuite field script id, e.g. `comments` or `custentity_tier`. */
@@ -39,6 +45,21 @@ export interface FieldSchema {
   custom: boolean;
   /** For Ref fields: the Mynt name of the target record type, when known. */
   refTarget?: string;
+  /**
+   * For Ref fields: whether the field holds one reference (a select) or
+   * several (a multiselect). Absent means the metadata did not say, which
+   * is treated as a single reference where a target is known. Live
+   * extraction currently establishes only `single` (see normalize.ts);
+   * `multiple` exists for snapshots and fixtures that state it.
+   */
+  selection?: FieldSelection;
+  /**
+   * For Ref fields: the N/search join id for this relationship, when it is
+   * not the field id. NetSuite's metadata does not state join ids, so this
+   * is never produced by `schema pull`; a snapshot may add it by hand where
+   * an account proves the default wrong. Absent means the field id.
+   */
+  searchJoin?: string;
   /** True when the metadata marks the field required. Absent means the metadata did not say. */
   required?: boolean;
   /** Fixed list of values the metadata reports for a Text select field. */
@@ -73,10 +94,34 @@ export interface RecordSchema {
    * do not and are addressed by their id string instead.
    */
   suiteScriptType: string | undefined;
+  /**
+   * The N/search search type family, when it differs from the record id:
+   * every transaction record is searched as `transaction`. Platform
+   * metadata like `suiteScriptType`, from the same table; absent for
+   * records searched by their own id.
+   */
+  searchFamily: string | undefined;
   /** True for custom records (`customrecord_*`, `customtransaction_*`, ...). */
   custom: boolean;
   fields: ReadonlyMap<string, FieldSchema>;
   sublists: ReadonlyMap<string, SublistSchema>;
+}
+
+/**
+ * A saved search the account knows: what `search saved "customsearch_x"`
+ * infers its result type from, offline. Account metadata, beside the
+ * records, never built-in: NetSuite owns the search, Mynt only repeats
+ * what it has been told. `searchType` is set only for a standalone search
+ * type, which `search.load` needs to be given explicitly; ordinary saved
+ * searches are loaded by id alone.
+ */
+export interface SavedSearchSchema {
+  /** The script id, e.g. `customsearch_active_customers`. */
+  id: string;
+  /** The Mynt name of the record type the search returns rows of. */
+  record: string;
+  /** The N/search type `search.load` must be passed, for a standalone search type only. */
+  searchType?: string;
 }
 
 /** On-disk JSON shape. Keys of `records` are NetSuite record type ids. */
@@ -84,6 +129,21 @@ export interface SchemaDocument {
   myntSchemaVersion: 1;
   source: SchemaSource;
   records: Record<string, SchemaDocumentRecord>;
+  /**
+   * Saved searches by script id. Optional and additive: a snapshot without
+   * it is a version-1 snapshot that knows no saved searches. `schema pull`
+   * does not fill it yet (NetSuite's REST metadata catalog has no saved
+   * searches); a snapshot may state them, and a later discovery step may
+   * write them, without any change to the compiler.
+   */
+  savedSearches?: Record<string, SchemaDocumentSavedSearch>;
+}
+
+export interface SchemaDocumentSavedSearch {
+  /** Mynt record name of the result rows. */
+  record: string;
+  /** The N/search type to pass to `search.load`, for a standalone search type only. */
+  searchType?: string;
 }
 
 export type SchemaSource =
@@ -101,6 +161,8 @@ export interface SchemaDocumentRecord {
   name: string;
   /** `record.Type` constant name. Present for known standard records only. */
   suiteScriptType?: string;
+  /** N/search family (`transaction`), for records whose searches report it. Platform metadata, like `suiteScriptType`. */
+  searchFamily?: string;
   custom?: boolean;
   fields: Record<string, SchemaDocumentField>;
   /** Keys are NetSuite sublist ids. */
@@ -125,6 +187,8 @@ export interface SchemaDocumentField {
   writable: boolean;
   custom?: boolean;
   refTarget?: string;
+  selection?: FieldSelection;
+  searchJoin?: string;
   required?: boolean;
   values?: string[];
   /** Provenance in NetSuite's own terms. Written by `mynt schema pull`, ignored by the compiler. */

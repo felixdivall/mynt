@@ -429,7 +429,11 @@ describe("compiler against a pulled-style snapshot", () => {
     expect(codes(`scheduled {\n    let c = load Customer("1")\n    c.balance = 1\n}\n`)[0]).toContain("MYNT1005 Customer.balance is read-only");
     expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.creditlimit > 1000 { save c }\n}\n`)).toEqual([]);
     expect(codes(`scheduled {\n    let c = load Customer("1")\n    log.debug(c.datecreated)\n}\n`)[0]).toContain("must be string, but received Date");
-    expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.subsidiary == "1" { }\n}\n`)[0]).toContain("Cannot compare Ref with string");
+    // The pulled metadata names subsidiary's target, so the field is a typed reference; salesrep's target is unknown, so it stays inert.
+    expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.subsidiary == "1" { }\n}\n`)[0]).toContain("Cannot compare a Subsidiary reference with a string");
+    expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.subsidiary == Subsidiary("1") { }\n}\n`)).toEqual([]);
+    expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.subsidiary.id == "1" { }\n}\n`)).toEqual([]);
+    expect(codes(`scheduled {\n    let c = load Customer("1")\n    if c.salesrep == "1" { }\n}\n`)[0]).toContain("MYNT1023 Cannot compare 'salesrep': Mynt cannot verify which record type it refers to");
     expect(codes(`scheduled {\n    let c = load Customer("1")\n    c.currencyprecision = "x"\n}\n`)[0]).toContain("Cannot assign string to Customer.currencyprecision, which is Unknown");
   });
 });

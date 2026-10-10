@@ -46,7 +46,7 @@ describe("primitive types: source spelling", () => {
     const UE = `beforeSubmit edit (customer: Customer) {\n`;
     expect(messages(`${UE}    customer.email = 1\n}\n`)).toEqual(["MYNT1006 Cannot assign number to Customer.email, which is string"]);
     expect(messages(`${UE}    if customer.email { }\n}\n`)[0]).toContain("if condition must be boolean, but received string");
-    expect(messages(`${UE}    if customer.email == 1 { }\n}\n`)[0]).toContain("Cannot compare string with number");
+    expect(messages(`${UE}    if customer.email === 1 { }\n}\n`)[0]).toContain("cannot compare string with number");
     expect(messages(`fn f(c: Customer): number {\n    return c\n}\nscheduled { }\n`)[0]).toContain("Cannot return Customer from 'f', which returns number");
     expect(errorCodes(compileMynt(`fn f(c: Customer, o: SalesOrder) { }\nscheduled {\n    let c = load Customer("1")\n    f(c, c)\n}\n`))).toEqual(["MYNT1014"]);
     expect(messages(`fn f(c: Customer, o: SalesOrder) { }\nscheduled {\n    let c = load Customer("1")\n    f(c, c)\n}\n`)[0]).toContain("must be SalesOrder, but received Customer");

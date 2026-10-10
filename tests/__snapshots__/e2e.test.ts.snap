@@ -11,7 +11,7 @@ define(["N/record"], (record) => {
     function execute(context) {
         const customer = record.load({
             type: record.Type.CUSTOMER,
-            id: "123"
+            id: 123
         });
 
         if (
@@ -47,7 +47,7 @@ define(["N/record"], (record) => {
     function execute(context) {
         const customer = record.load({
             type: record.Type.CUSTOMER,
-            id: "123"
+            id: 123
         });
 
         if (
@@ -184,7 +184,7 @@ define(["N/record"], (record) => {
     function execute(context) {
         const order = record.load({
             type: record.Type.SALES_ORDER,
-            id: "123"
+            id: 123
         });
 
         let line$index = 0;
@@ -229,7 +229,7 @@ define(["N/record"], (record) => {
     function execute(context) {
         const customer = record.load({
             type: record.Type.CUSTOMER,
-            id: "123"
+            id: 123
         });
 
         if (
@@ -369,7 +369,7 @@ define(["N/log", "N/record"], (log, record) => {
     function execute(context) {
         const customer = record.load({
             type: record.Type.CUSTOMER,
-            id: "123"
+            id: 123
         });
 
         log.debug({
@@ -451,7 +451,7 @@ define(["N/record"], (record) => {
     function execute(context) {
         const customer = record.load({
             type: record.Type.CUSTOMER,
-            id: "123"
+            id: 123
         });
 
         customer.setValue({

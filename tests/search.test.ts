@@ -60,26 +60,58 @@ function seeded() {
   return netsuite;
 }
 
-describe("record ids: string or number", () => {
-  it("every id-taking operation accepts a number and a string, and emits the id as written", () => {
+describe("record ids: numbers, passed to NetSuite as written", () => {
+  it("every id-taking operation accepts a number and passes it on as a number", () => {
     const js = output(
       scheduled(
-        `    let a = load Customer(123)\n    let b = load Customer("123")\n    let c = copy Customer(123)\n    let d = transform SalesOrder(123) to Invoice\n    save c\n    save d`,
+        `    let a = load Customer(123)\n    let c = copy Customer(123)\n    let d = transform SalesOrder(123) to Invoice\n    save c\n    save d`,
       ),
     );
     expect(js).toContain("id: 123");
-    expect(js).toContain('id: "123"');
     expect(js).toContain("fromId: 123");
-    expect(output(scheduled(`    let r = Customer(123)\n    let s = Customer("123")\n    log.debug(r.id)\n    log.debug(s.id)`))).toContain('const s = "123";');
+    expect(js).not.toContain('"123"');
+    expect(js).not.toContain("String(");
+  });
+
+  it("a numeric literal is a number in the AST", () => {
+    const result = compileMynt(scheduled(`    let a = load Customer(123)`));
+    const declaration = result.unit!.kind === "Scheduled" ? result.unit!.entryPoint.body[0]! : undefined;
+    expect(declaration).toMatchObject({ kind: "LocalDeclaration", initializer: { kind: "BuiltinCall", arguments: [{ kind: "NumberLiteral", value: 123, type: "Number" }] } });
+  });
+
+  it("a string id is still accepted and passes through as written", () => {
+    const js = output(scheduled(`    let b = load Customer("123")\n    let e = load Customer("ABC123")\n    let s = Customer("123")\n    log.debug(s.id)`));
+    expect(js).toContain('id: "123"');
+    expect(js).toContain('id: "ABC123"');
+    expect(js).toContain('const s = "123";');
+  });
+
+  it("a number-typed value passes through; a reference built from one holds its id as a string", () => {
+    const js = output(`fn touch(id: number) {\n    let c = load Customer(id)\n    log.debug(c.email)\n}\n\nscheduled {\n    let n = 123\n    let a = load Customer(n)\n    let r = Customer(n)\n    log.debug(a.email)\n    log.debug(r[email])\n    touch(123)\n}\n`);
+    expect(js).toContain("id: id");
+    expect(js).toContain("id: n");
+    expect(js).toContain("const r = String(n);");
+    expect(js).toContain("id: r,");
+    const netsuite = seeded();
+    netsuite.load(js).execute!(scheduledContext());
+    expect(netsuite.record.loadCalls).toEqual([{ type: "customer", id: "123" }, { type: "customer", id: "123" }]);
+    expect(netsuite.search.lookupCalls).toEqual([{ type: "customer", id: "123", columns: ["email"] }]);
+  });
+
+  it("MYNT1045 rejects a numeric literal that is not a whole number", () => {
+    expect(first(scheduled(`    let r = Customer(1.5)`))).toBe("MYNT1045 Record id must be a whole number, but Customer(...) received 1.5");
+    expect(first(scheduled(`    let a = load Customer(1.5)`))).toBe("MYNT1045 Record id must be a whole number, but load Customer(...) received 1.5");
+    expect(first(scheduled(`    let d = transform SalesOrder(0.25) to Invoice\n    save d`))).toBe("MYNT1045 Record id must be a whole number, but transform SalesOrder(...) received 0.25");
+    expect(messages(scheduled(`    let r = Customer(0)\n    log.debug(r.id)`))).toEqual([]);
   });
 
   it("MYNT1045 rejects any other id type, naming the operation", () => {
-    expect(first(scheduled(`    let a = load Customer(true)`))).toBe("MYNT1045 Record id must be string or number, but load Customer(...) received boolean");
-    expect(first(scheduled(`    let a = copy Customer(load Customer(1))`))).toContain("MYNT1045 Record id must be string or number, but copy Customer(...) received Customer");
+    expect(first(scheduled(`    let a = load Customer(true)`))).toBe("MYNT1045 Record id must be a number or a string, but load Customer(...) received boolean");
+    expect(first(scheduled(`    let a = copy Customer(load Customer(1))`))).toContain("MYNT1045 Record id must be a number or a string, but copy Customer(...) received Customer");
     expect(first(scheduled(`    let r = Customer(123)\n    let a = load Customer(r)`))).toBe(
-      "MYNT1045 Record id must be string or number, but load Customer(...) received Ref<Customer>; a reference's id is 'r.id'",
+      "MYNT1045 Record id must be a number or a string, but load Customer(...) received Ref<Customer>; a reference's id is 'r.id'",
     );
-    expect(first(scheduled(`    let r = Customer(Customer(1))`))).toContain("MYNT1045 Record id must be string or number, but Customer(...) received Ref<Customer>");
+    expect(first(scheduled(`    let r = Customer(Customer(1))`))).toContain("MYNT1045 Record id must be a number or a string, but Customer(...) received Ref<Customer>");
   });
 
   it("a numeric id reaches the fake runtime and resolves the same record as the string", () => {
@@ -95,8 +127,8 @@ describe("record ids: string or number", () => {
     expect(type(scheduled(`    for row in search Customer {\n        log.debug(row.i§d)\n    }`))).toBe("string");
     expect(type(scheduled(`    log.debug(Customer(123).i§d)`))).toBe("string");
     const js = output(scheduled(`    let r = Customer(123)\n    log.debug(r.id)\n    log.debug(Customer(7).id)\n    log.debug(Customer("8").id)`));
-    expect(js).toContain("details: String(r)");
-    expect(js).toContain("details: String(7)");
+    expect(js).toContain("details: r");
+    expect(js).toContain('details: "7"');
     expect(js).toContain('details: "8"');
     const netsuite = seeded();
     netsuite.load(js).execute!(scheduledContext());
@@ -112,7 +144,7 @@ describe("record references: Ref<T>", () => {
     expect(declaration).toMatchObject({ kind: "LocalDeclaration", local: { type: { kind: "Reference", record: { name: "Customer" } } } });
     expect((declaration as { initializer: { kind: string } }).initializer.kind).toBe("RecordReference");
     expect([...result.unit!.dependencies]).toEqual(["N/log"]);
-    expect(result.output).toContain("const customer = 123;");
+    expect(result.output).toContain('const customer = "123";');
     const netsuite = new FakeNetSuite();
     netsuite.load(result.output!).execute!(scheduledContext());
     expect(netsuite.record.loadCalls).toEqual([]);
@@ -132,7 +164,7 @@ describe("record references: Ref<T>", () => {
       "MYNT1011 'c' is a Ref<Customer>: a reference to the record, not the record itself. Look the field up without loading, 'c[email]', or load the record, 'let x = load Customer(c.id)', then 'x.email'",
     );
     expect(first(scheduled(`    let c = Customer(1)\n    log.debug(c.emial)`))).toBe(
-      "MYNT1011 Ref<Customer> has no member 'emial'; a reference has only '.id'. Did you mean 'email', looked up as 'c[email]'?",
+      "MYNT1011 Ref<Customer> has no member 'emial'; a reference has '.id'. Did you mean 'email', looked up as 'c[email]'?",
     );
   });
 
@@ -146,7 +178,9 @@ describe("record references: Ref<T>", () => {
   });
 
   it("a reference is not a record, a condition, or a collection", () => {
-    expect(first(scheduled(`    if Customer(1) == Customer(1) { }`))).toContain("MYNT1023 '==' is not defined for Ref<Customer> values");
+    // References compare by identity (see reference-comparisons.test.ts); ordering is not defined for them.
+    expect(messages(scheduled(`    if Customer(1) == Customer(1) { }`))).toEqual([]);
+    expect(first(scheduled(`    if Customer(1) < Customer(1) { }`))).toContain("MYNT1023 '<' is not defined for references; references compare by identity with == and !=");
     expect(first(scheduled(`    for x in Customer(1) { }`))).toContain("MYNT1029 Cannot iterate over a Ref<Customer> value");
     expect(first(`fn f(c: Customer) { }\nscheduled {\n    f(Customer(1))\n}\n`)).toContain("MYNT1014 'f' parameter 'c' must be Customer, but received Ref<Customer>");
     expect(first(scheduled(`    if Customer(1) { }`))).toContain("MYNT1021 if condition must be boolean, but received Ref<Customer>");
@@ -347,7 +381,7 @@ describe("search: an explicit N/search backend", () => {
 
   it("without a where clause every record is a row, and rows carry id plus the planned columns", () => {
     const js = output(scheduled(`    let customers = search Customer\n    for c in customers {\n        log.debug(c.id)\n    }`));
-    expect(js).toContain("mynt$search(search.Type.CUSTOMER, [])");
+    expect(js).toContain("mynt$search(search.Type.CUSTOMER, [], [])");
     const netsuite = seeded();
     netsuite.load(js).execute!(scheduledContext());
     expect(netsuite.search.runs).toEqual([{ type: "customer", columns: ["internalid"], filters: undefined }]);
@@ -391,7 +425,7 @@ describe("search: an explicit N/search backend", () => {
 
   it("emits the filter expression with enum operators and the search module local", () => {
     const js = output(scheduled(`    for r in search Customer where email != "" || comments == "x" {\n        log.debug(r.id)\n    }`));
-    expect(js).toContain(`mynt$search(\n            search.Type.CUSTOMER,\n            [],\n            [\n                ["email", search.Operator.ISNOTEMPTY, ""],\n                "or",\n                ["comments", search.Operator.IS, "x"]\n            ]\n        )`);
+    expect(js).toContain(`mynt$search(\n            search.Type.CUSTOMER,\n            [],\n            [],\n            [\n                ["email", search.Operator.ISNOTEMPTY, ""],\n                "or",\n                ["comments", search.Operator.IS, "x"]\n            ]\n        )`);
     expect(output(scheduled(`    let search = "x"\n    for r in search Customer where email == search {\n        log.debug(r.id)\n    }`))).toContain('["email", search$.Operator.IS, search]');
   });
 
@@ -424,7 +458,7 @@ describe("search: an explicit N/search backend", () => {
 
   it("plans search columns from row field reads, as for queries, and pages through large results", () => {
     const js = output(scheduled(`    let rows = search SalesOrder\n    for r in rows {\n        log.debug(r.memo)\n    }\n    for r in rows {\n        if r.total > 10 {\n            log.debug(r.id)\n        }\n    }`));
-    expect(js).toContain('mynt$search(search.Type.SALES_ORDER, ["memo", "total"])');
+    expect(js).toContain('mynt$search(search.Type.SALES_ORDER, ["memo", "total"], [])');
     const netsuite = new FakeNetSuite();
     for (let i = 1; i <= 2500; i++) netsuite.record.seed("salesorder", String(i), { memo: `o${i}`, total: i });
     netsuite.load(js).execute!(scheduledContext());
@@ -436,7 +470,7 @@ describe("search: an explicit N/search backend", () => {
 
   it("a custom record searches by its script id, and lookups do too", () => {
     const js = output(scheduled(`    for r in search MyntLog where custrecord_mynt_done {\n        log.debug(r.name)\n    }\n    log.debug(MyntLog(10)[name])`));
-    expect(js).toContain('mynt$search("customrecord_mynt_log", ["name"], [["custrecord_mynt_done", search.Operator.IS, "T"]])');
+    expect(js).toContain('mynt$search("customrecord_mynt_log", ["name"], [], [["custrecord_mynt_done", search.Operator.IS, "T"]])');
     expect(js).toMatch(/type: "customrecord_mynt_log",\s+id: 10,\s+columns: \["name"\]/);
   });
 
@@ -485,10 +519,10 @@ describe("search and lookup: editor features", () => {
 
   it("hover: a reference, a looked-up field, a projection local, a search", () => {
     expect(hover(scheduled(`    let c = Cust§omer(123)`))).toBe(
-      "```mynt\nCustomer(id: string | number): Ref<Customer>\n```\n\nreference to a Customer by internal id · nothing is loaded · read fields with `[email, ...]` (one `N/search.lookupFields` call) or load it with `load Customer(ref.id)`",
+      "```mynt\nCustomer(id: string | number): Ref<Customer>\n```\n\nCustomer reference · id: string · nothing is loaded · read fields with `[comments, ...]` (one `N/search.lookupFields` call) or load it with `load Customer(ref.id)`",
     );
     expect(hover(scheduled(`    let c = Customer(123)\n    log.debug(§c.id)`))).toBe(
-      "```mynt\nc: Ref<Customer>\n```\n\nlocal · reference to a Customer by internal id; nothing is loaded. Read fields with `[email, ...]` (one `N/search.lookupFields` call) or load it with `load Customer(c.id)`",
+      "```mynt\nc: Ref<Customer>\n```\n\nlocal · Customer reference · id: string · nothing is loaded; read fields with `[comments, ...]` (one `N/search.lookupFields` call) or load it with `load Customer(c.id)`",
     );
     expect(hover(scheduled(`    let c = Customer(123)\n    log.debug(c.i§d)`))).toBe("```mynt\nCustomer.id: string\n```\n\ninternal id of the record · use it to `load` the record");
     expect(hover(scheduled(`    let e = Customer(123)[em§ail]`))).toBe("```mynt\nCustomer.email: string\n```\n\nEmail · string · writable · NetSuite field `email`");

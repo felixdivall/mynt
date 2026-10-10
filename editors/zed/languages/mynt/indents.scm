@@ -6,8 +6,8 @@
 (arguments "(" @start ")" @end) @indent
 (parameters "(" @start ")" @end) @indent
 
-; A query or search whose `where` clause continues on following lines
-; indents those lines one level past the statement that starts it.
+; A query or search whose clauses continue on following lines indents
+; those lines one level past the statement that starts it.
 (query_expression) @indent
 
 ; A projection's field list that spans lines indents its contents.

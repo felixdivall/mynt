@@ -11,7 +11,7 @@
  * yields a variable at `where`, because that is what bound there.
  *
  * The taxonomy an editor sees, all standard LSP types and modifiers:
- *   fn let return if for in where to save ...   keyword
+ *   fn let return if for in saved where select order group by asc desc limit first or try catch finally to save ...   keyword
  *   query search load create copy transform      function + defaultLibrary
  *   log / log.debug                              namespace / method + defaultLibrary
  *   string number boolean                        type + defaultLibrary
@@ -113,6 +113,14 @@ function collectBound(doc: SemanticDocument, add: Add): void {
       case "LocalDeclaration":
         add((node as unknown as LocalDeclaration).local.declaredAt, "variable", "declaration");
         break;
+      case "TryCatch": {
+        const binding = (node as unknown as { binding: LocalSymbol | undefined }).binding;
+        if (binding) add(binding.declaredAt, "variable", "declaration");
+        break;
+      }
+      case "ErrorPropertyRead":
+        add((node as unknown as { nameSpan: Span }).nameSpan, "property", "readonly");
+        break;
       case "ForEach":
         add((node as unknown as { local: LocalSymbol }).local.declaredAt, "variable", "declaration");
         break;
@@ -134,6 +142,13 @@ function collectBound(doc: SemanticDocument, add: Add): void {
         add(field.span, "property", ...(field.field.writable ? [] : (["readonly"] as const)));
         break;
       }
+      case "JoinedFieldRead":
+      case "JoinedQueryField": {
+        // A field reached through a relationship is a field: the join is in the type, not the color.
+        const joined = node as unknown as { fieldSpan: Span; field: { writable: boolean } };
+        add(joined.fieldSpan, "property", ...(joined.field.writable ? [] : (["readonly"] as const)));
+        break;
+      }
       case "SublistAccess":
         add((node as unknown as SublistAccess).nameSpan, "property");
         break;
@@ -145,6 +160,23 @@ function collectBound(doc: SemanticDocument, add: Add): void {
       }
       case "RecordIdRead":
         add((node as unknown as RecordIdRead).nameSpan, "property", "readonly");
+        break;
+      case "ResultFieldRead":
+        // An aggregate's result is a read-only member of the summary row, like any row field.
+        add((node as unknown as { nameSpan: Span }).nameSpan, "property", "readonly");
+        break;
+      case "AliasReference":
+        add(node.span, "property", "readonly");
+        break;
+      case "SelectedAggregate": {
+        // `total = sum(amount)`: the result name is declared here; the aggregate is a builtin operation, like `search` itself.
+        const aggregate = node as unknown as { aliasSpan: Span; functionSpan: Span };
+        add(aggregate.aliasSpan, "property", "declaration", "readonly");
+        add(aggregate.functionSpan, "function", "defaultLibrary");
+        break;
+      }
+      case "ReferenceTextRead":
+        add((node as unknown as { nameSpan: Span }).nameSpan, "property", "readonly");
         break;
       case "RecordTypeReference":
         add((node as unknown as RecordTypeReference).span, "struct");
@@ -204,14 +236,36 @@ function collectSyntax(doc: SemanticDocument, add: Add): void {
         add(n.keywordSpan as Span, "keyword");
         if (n.elseSpan) add(n.elseSpan as Span, "keyword");
         break;
+      case "TryStatement":
+        add(n.keywordSpan as Span, "keyword");
+        if (n.catchSpan) add(n.catchSpan as Span, "keyword");
+        if (n.finallySpan) add(n.finallySpan as Span, "keyword");
+        break;
+      case "OrExpression":
+        add(n.orSpan as Span, "keyword");
+        break;
       case "ForStatement":
         add(n.keywordSpan as Span, "keyword");
         add(n.inSpan as Span, "keyword");
         break;
       case "QueryExpression":
-        // `query` is a builtin operation like `load`, not structural syntax; `where` is.
+        // `query`/`search` are builtin operations like `load`, not structural syntax; `saved` and the clause words are.
         add(n.keywordSpan as Span, "function", "defaultLibrary");
-        if (n.whereSpan) add(n.whereSpan as Span, "keyword");
+        if (n.saved) add((n.saved as { keywordSpan: Span }).keywordSpan, "keyword");
+        break;
+      case "WhereClause":
+      case "SelectClause":
+      case "LimitClause":
+      case "FirstClause":
+        add(n.keywordSpan as Span, "keyword");
+        break;
+      case "OrderByClause":
+      case "GroupByClause":
+        add(n.keywordSpan as Span, "keyword");
+        if (n.bySpan) add(n.bySpan as Span, "keyword");
+        break;
+      case "SortKey":
+        if (n.directionSpan) add(n.directionSpan as Span, "keyword");
         break;
       case "CallExpression":
         if (n.toSpan) add(n.toSpan as Span, "keyword");

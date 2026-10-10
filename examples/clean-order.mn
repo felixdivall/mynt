@@ -1,8 +1,8 @@
 scheduled {
-    let order = load SalesOrder("123")
+    let order = load SalesOrder(123)
 
     for line in order.item {
-        if line.quantity == 0 {
+        if line.quantity === 0 {
             remove line
         }
     }

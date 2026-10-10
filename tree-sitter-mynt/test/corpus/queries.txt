@@ -43,9 +43,10 @@ scheduled {
           query: (call_expression
             function: (identifier)
             type: (type_identifier))
-          condition: (binary_expression
-            left: (identifier)
-            right: (string))))
+          clause: (where_clause
+            condition: (binary_expression
+              left: (identifier)
+              right: (string)))))
       (for_statement
         variable: (identifier)
         iterable: (identifier)
@@ -72,17 +73,18 @@ scheduled {
           query: (call_expression
             function: (identifier)
             type: (type_identifier))
-          condition: (binary_expression
-            left: (binary_expression
+          clause: (where_clause
+            condition: (binary_expression
               left: (binary_expression
-                left: (identifier)
-                right: (string))
-              right: (identifier))
-            right: (unary_expression
-              operand: (parenthesized_expression
-                (binary_expression
+                left: (binary_expression
                   left: (identifier)
-                  right: (string))))))
+                  right: (string))
+                right: (identifier))
+              right: (unary_expression
+                operand: (parenthesized_expression
+                  (binary_expression
+                    left: (identifier)
+                    right: (string)))))))
         body: (block
           (expression_statement
             (call_expression

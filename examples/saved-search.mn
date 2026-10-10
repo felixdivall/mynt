@@ -1,0 +1,17 @@
+// A saved search is loaded by its script id and used as defined: its own
+// filters and columns stay, and `where` adds to them. Its result type is
+// not written: the account snapshot knows what the saved search returns
+// (`mynt build examples/saved-search.mn --schema tests/fixtures/account-snapshot.json`
+// uses the test account; a snapshot that does not list the search needs
+// `search saved Customer "..."` instead).
+scheduled {
+    let customers = search saved "customsearch_active_customers"
+        where comments === ""
+
+    for customer in customers {
+        log.debug(customer.email)
+        let record = load Customer(customer.id)
+        record.comments = "Reviewed by Mynt"
+        save record
+    }
+}

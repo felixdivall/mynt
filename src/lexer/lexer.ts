@@ -1,8 +1,10 @@
 import { DiagnosticBag, DiagnosticCode, type Position, type Span } from "../diagnostics.js";
 import type { Token, TokenKind } from "./tokens.js";
 
-/** Two-character punctuation is matched before one-character punctuation. */
+/** Longer punctuation is matched before shorter: `===` is never `==` `=`. */
 const PUNCTUATION: Record<string, TokenKind> = {
+  "===": "EqualsEqualsEquals",
+  "!==": "BangEqualsEquals",
   "==": "EqualsEquals",
   "!=": "BangEquals",
   "&&": "AmpAmp",
@@ -109,14 +111,15 @@ export function tokenize(source: string, diagnostics: DiagnosticBag): Token[] {
       continue;
     }
 
-    // Two-character operators first; a lone final character must not match
-    // a two-character entry by way of a short slice.
+    // Longest operator first; a short final slice must not match a longer entry.
+    const three = source.slice(offset, offset + 3);
+    const threeKind = three.length === 3 ? PUNCTUATION[three] : undefined;
     const two = source.slice(offset, offset + 2);
     const twoKind = two.length === 2 ? PUNCTUATION[two] : undefined;
-    const punct = twoKind ?? PUNCTUATION[ch];
+    const punct = threeKind ?? twoKind ?? PUNCTUATION[ch];
     if (punct) {
       const start = position();
-      advance(twoKind ? 2 : 1);
+      advance(threeKind ? 3 : twoKind ? 2 : 1);
       push(punct, start);
       continue;
     }

@@ -19,6 +19,11 @@ export function nestedBodies(statement: BoundStatement): readonly (readonly Boun
       return statement.elseBody ? [statement.thenBody, statement.elseBody] : [statement.thenBody];
     case "ForEach":
       return [statement.body];
+    case "TryCatch":
+      return [statement.body, ...(statement.handler ? [statement.handler] : []), ...(statement.finalizer ? [statement.finalizer] : [])];
+    case "LocalDeclaration":
+      // The absence branch of `let x = value or { ... }` is a body of its own.
+      return statement.initializer.kind === "OptionalResolve" ? [statement.initializer.absence] : [];
     default:
       return [];
   }
@@ -41,6 +46,8 @@ export function directExpressions(statement: BoundStatement): BoundExpression[] 
       return [statement.target, ...statement.initializers.map((i) => i.value)];
     case "ExpressionStatement":
       return [statement.expression];
+    case "TryCatch":
+      return [];
     case "Return":
       return statement.value ? [statement.value] : [];
     case "If":
@@ -55,10 +62,28 @@ export function forEachExpression(expression: BoundExpression, visit: (expressio
   visit(expression);
   switch (expression.kind) {
     case "FieldRead":
+    case "JoinedFieldRead":
     case "RecordIdRead":
+    case "ReferenceTextRead":
+    case "ErrorPropertyRead":
+    case "ResultFieldRead":
     case "SublistAccess":
     case "Lookup":
       forEachExpression(expression.receiver, visit);
+      break;
+    case "OptionalResolve":
+      forEachExpression(expression.value, visit);
+      break;
+    case "OptionalPresence":
+      forEachExpression(expression.reference, visit);
+      break;
+    case "JoinedQueryField":
+      forEachExpression(expression.base, visit);
+      break;
+    case "SelectedAggregate":
+      if (expression.argument) forEachExpression(expression.argument, visit);
+      break;
+    case "AliasReference":
       break;
     case "RecordReference":
       forEachExpression(expression.id, visit);
@@ -76,6 +101,7 @@ export function forEachExpression(expression: BoundExpression, visit: (expressio
       forEachExpression(expression.operand, visit);
       break;
     case "Query":
+      if (expression.source.kind === "saved") forEachExpression(expression.source.id, visit);
       if (expression.condition) forEachExpression(expression.condition, visit);
       break;
     default:
