@@ -2,7 +2,7 @@
   "name": "@felixdivall/mynt",
   "version": "0.0.1",
   "description": "Mynt: a semantic source language that compiles to SuiteScript 2.1",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "mynt": "./bin/mynt.js"
