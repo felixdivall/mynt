@@ -1,6 +1,6 @@
 {
   "name": "@felixdivall/mynt",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Mynt: a semantic source language that compiles to SuiteScript 2.1",
   "license": "MIT",
   "type": "module",
