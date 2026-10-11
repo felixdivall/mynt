@@ -6,6 +6,15 @@ This repository is the v0 spike: one file is one script, field access is
 checked against a schema, record types are compile-time symbols, and `N/*`
 dependencies are inferred.
 
+- **Website:** [mynt.sh](https://mynt.sh)
+- **Language roadmap:** [mynt.sh/roadmap](https://mynt.sh/roadmap) shows which
+  SuiteScript APIs Mynt covers, with real compiler output, and the syntax
+  proposed for the rest.
+- **Propose syntax:** [Language Proposals](https://github.com/felixdivall/mynt/discussions/categories/language-proposals)
+  in Discussions. Start from an API's page on the roadmap, which fills in the
+  proposal for you.
+- **npm:** [`@felixdivall/mynt`](https://www.npmjs.com/package/@felixdivall/mynt)
+
 ## Commands
 
 Installed from npm, the package `@felixdivall/mynt` provides the `mynt`
@@ -77,7 +86,7 @@ define(["N/log", "N/record"], (log, record) => {
     function execute(context) {
         const customer = record.load({
             type: record.Type.CUSTOMER,
-            id: "123"
+            id: 123
         });
 
         log.debug({
@@ -196,7 +205,7 @@ define(["N/record"], (record) => {
     function execute(context) {
         const customer = record.load({
             type: record.Type.CUSTOMER,
-            id: "123"
+            id: 123
         });
 
         customer.setValue({
@@ -231,7 +240,7 @@ define(["N/record"], (record) => {
     function execute(context) {
         const customer = record.load({
             type: record.Type.CUSTOMER,
-            id: "123"
+            id: 123
         });
 
         if (
