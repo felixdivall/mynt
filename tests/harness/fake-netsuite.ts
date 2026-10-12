@@ -891,15 +891,39 @@ export function loadSuiteScriptModule(source: string, modules: Record<string, un
   return exported;
 }
 
+/** A File Cabinet file as `file.load` hands it out: its id and name, nothing more is modeled. */
+export interface FakeFile {
+  id: string;
+  name: string;
+}
+
+/** Fake `N/file`: `load` over seeded files; an unknown id throws, as NetSuite would. */
+export class FakeFileModule {
+  private readonly files = new Map<string, FakeFile>();
+  readonly loadCalls: { id: string | number }[] = [];
+
+  seed(id: string, name: string): void {
+    this.files.set(id, { id, name });
+  }
+
+  load = (options: { id: string | number }): FakeFile => {
+    this.loadCalls.push({ id: options.id });
+    const file = this.files.get(String(options.id));
+    if (!file) throw new Error(`Fake NetSuite has no file with id ${String(options.id)}`);
+    return file;
+  };
+}
+
 /** One fake account: every module the generated code may ask for, plus their recorded calls. */
 export class FakeNetSuite {
   readonly log = new FakeLog();
   readonly record = new FakeRecordModule();
   readonly query = new FakeQueryModule(this.record);
   readonly search = new FakeSearchModule(this.record);
+  readonly file = new FakeFileModule();
 
   get modules(): Record<string, unknown> {
-    return { "N/log": this.log, "N/record": this.record, "N/query": this.query, "N/search": this.search };
+    return { "N/log": this.log, "N/record": this.record, "N/query": this.query, "N/search": this.search, "N/file": this.file };
   }
 
   load(source: string): EntryPoints {

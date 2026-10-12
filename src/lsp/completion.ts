@@ -3,13 +3,14 @@ import { CompletionItemKind, InsertTextFormat, type CompletionItem } from "vscod
 import { USER_EVENT_TYPES } from "../semantic/bound.js";
 import { builtinSignature, listBuiltinRoots, type BuiltinSymbol } from "../semantic/builtins.js";
 import { QUERY_OPERATIONS } from "../parser/ast.js";
-import { expressionEndingAt, localsInScopeAt, resolveNameAt, type SemanticDocument } from "../semantic/query.js";
+import { boundPathAt, expressionEndingAt, localsInScopeAt, resolveNameAt, type SemanticDocument } from "../semantic/query.js";
 import { isLineType, isProjectionType, isRecordType, isReferenceType, isRowOrigin, isRowRecord, isSummaryType, sublistName, summaryField, typeName, type MyntType, type RecordType } from "../semantic/types.js";
-import type { BoundExpression } from "../semantic/bound.js";
+import type { BoundExpression, Destructure } from "../semantic/bound.js";
 import type { SublistSchema } from "../schema/types.js";
 import type { FieldSchema, FieldType, RecordSchema } from "../schema/types.js";
 import { completionSite, type CompletionContext } from "./context.js";
 import { aggregateDetail, describeLocal, fieldDetail, recordDetail } from "./describe.js";
+import { PLATFORM_TYPES } from "../semantic/loadable.js";
 import { functionSignature } from "./hover.js";
 
 export function completionsAt(doc: SemanticDocument, offset: number): CompletionItem[] {
@@ -24,7 +25,10 @@ function itemsFor(doc: SemanticDocument, offset: number, context: CompletionCont
     case "eventName":
       return USER_EVENT_TYPES.map((event) => ({ label: event, kind: CompletionItemKind.EnumMember, detail: "user event type" }));
     case "recordType":
-      return doc.schema.listRecords().map(recordItem);
+      // After `load`, the platform types are loadable too: a saved search, a file.
+      return [...doc.schema.listRecords().map(recordItem), ...(context.loadable ? platformTypeItems() : [])];
+    case "patternField":
+      return patternFieldItems(doc, context.patternOffset, context.listed);
     case "member":
       return memberItems(doc, context.dotOffset, context.receiver);
     case "projectionField":
@@ -35,6 +39,14 @@ function itemsFor(doc: SemanticDocument, offset: number, context: CompletionCont
       // After `first` the search is optional, and `or` (not a clause) resolves it where it is declared.
       return [...(context.used.includes("first") ? orItems() : []), ...clauseItems(context.used), ...statementItems(), ...localItems(doc, offset), ...functionItems(doc), ...builtinItems()];
     case "selectField": {
+      if (context.lookup) {
+        // `lookup X select |`: the fields of the one record, by type name or through the receiver's type; no aggregates.
+        const receiverLocal = (context as { receiverLocal?: string }).receiverLocal;
+        const resolved = receiverLocal ? resolveNameAt(doc, receiverLocal, offset) : undefined;
+        const type = resolved?.kind === "local" ? resolved.local.type : undefined;
+        const record = context.record ? doc.schema.getRecordByName(context.record) : type && (isReferenceType(type) || isRecordType(type)) ? type.record : undefined;
+        return record ? [...record.fields.values()].filter((field) => !context.listed.includes(field.id)).map((field) => fieldItem(field, record.name)) : [];
+      }
       const record = searchedRecord(doc, context.record, context.savedSearch);
       // Fields first (in a summary, the ones a bucket can carry), then the aggregates, each as a named item.
       return record ? [...[...record.fields.values()].filter((field) => !context.listed.includes(field.id)).map((field) => fieldItem(field)), ...aggregateItems()] : aggregateItems();
@@ -258,6 +270,38 @@ function savedSearchItems(doc: SemanticDocument, offset: number, record: string 
   return [...known, ...localItems(doc, offset).filter((item) => item.detail === "string")];
 }
 
+/** `Search`, `File`: the platform types `load` accepts beside record types. */
+function platformTypeItems(): CompletionItem[] {
+  return [...PLATFORM_TYPES.values()].map((platform) => ({
+    label: platform.name,
+    kind: CompletionItemKind.Class,
+    detail: `platform type · ${platform.example}`,
+    documentation: platform.summary,
+  }));
+}
+
+/**
+ * Fields inside `let { ... } = value`: the value is after the cursor, so it
+ * is found through the bound declaration containing the `{` (its source's
+ * projection type), or, while the declaration does not bind, by resolving
+ * a single name after `=` as a local. Fields already listed are left out.
+ */
+function patternFieldItems(doc: SemanticDocument, patternOffset: number, listed: string[]): CompletionItem[] {
+  let type: MyntType | undefined;
+  for (const node of boundPathAt(doc, patternOffset)) {
+    if (node.kind === "Destructure") type = (node as unknown as Destructure).source.type;
+  }
+  if (!type) {
+    const rest = doc.text.slice(patternOffset);
+    const match = /^\{[^}=\n]*\}\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\n|$)/.exec(rest);
+    const resolved = match ? resolveNameAt(doc, match[1]!, patternOffset) : undefined;
+    if (resolved?.kind === "local") type = resolved.local.type;
+  }
+  if (!type || !isProjectionType(type)) return [];
+  const record = type.record;
+  return type.fields.filter((f) => !listed.includes(f.field.id)).map((f) => fieldItem(f.field, record.name));
+}
+
 /** The record a search is over: by its written name, or through the snapshot for a saved search without one. */
 function searchedRecord(doc: SemanticDocument, record: string | undefined, savedSearch: string | undefined): RecordSchema | undefined {
   const name = record ?? (savedSearch !== undefined ? doc.schema.getSavedSearch(savedSearch)?.record : undefined);
@@ -317,14 +361,22 @@ function clauseItems(used: string[]): CompletionItem[] {
     .map(([label, text, detail]) => ({ label, kind: CompletionItemKind.Keyword, detail, insertText: text, insertTextFormat: InsertTextFormat.Snippet }));
 }
 
-/** `query` and `search` are operations of the language, not registry built-ins; they complete beside `load` and the rest. */
+/** `query`, `search`, and `lookup` are operations of the language, not registry built-ins; they complete beside `load` and the rest. */
 function queryOperationItems(): CompletionItem[] {
-  return QUERY_OPERATIONS.map((operation) => ({
-    label: operation,
-    kind: CompletionItemKind.Function,
-    detail: `${operation} T where ...: Sequence<T>`,
-    documentation: `Rows of T from ${operation === "query" ? "N/query" : "N/search"}, read-only; the backend is the one you name`,
-  }));
+  return [
+    ...QUERY_OPERATIONS.map((operation) => ({
+      label: operation,
+      kind: CompletionItemKind.Function,
+      detail: `${operation} T where ...: Sequence<T>`,
+      documentation: `Rows of T from ${operation === "query" ? "N/query" : "N/search"}, read-only; the backend is the one you name`,
+    })),
+    {
+      label: "lookup",
+      kind: CompletionItemKind.Function,
+      detail: "lookup T(id) select fields: the selected fields",
+      documentation: "Reads selected fields of one record: one N/search.lookupFields call for a reference, a local read for a loaded record. The same operation as T(id)[fields]",
+    },
+  ];
 }
 
 function builtinItems(): CompletionItem[] {

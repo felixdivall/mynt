@@ -162,7 +162,7 @@ describe("lsp: completion", () => {
 
   it("offers record types from the schema for a parameter type and after load", () => {
     expect(labels(`beforeSubmit edit (customer: Cus§)`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
-    expect(labels(`scheduled {\n    let customer = load Cus§("123")\n}\n`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let customer = load Cus§("123")\n}\n`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice", "Search", "File"]);
     const { doc, offset } = at(`scheduled {\n    let c = load §`);
     expect(completionsAt(doc, offset)[0]).toMatchObject({ label: "Customer", detail: "record", documentation: "NetSuite record `customer` · `record.Type.CUSTOMER`" });
   });
@@ -190,12 +190,12 @@ describe("lsp: completion", () => {
 
   it("offers statements, locals, and built-ins at a statement position", () => {
     const items = labels(`scheduled {\n    let c = load Customer(1)\n    §\n}\n`);
-    expect(items).toEqual(["let", "if", "save", "delete", "for", "add", "remove", "return", "try", "c", "query", "search", "log", "load", "create", "copy", "transform"]);
+    expect(items).toEqual(["let", "if", "save", "delete", "for", "add", "remove", "return", "try", "c", "query", "search", "lookup", "log", "load", "create", "copy", "transform"]);
   });
 
   it("offers locals, built-ins, and boolean literals in expression position, respecting scope", () => {
-    expect(labels(`${UE}    let c = load Customer(1)\n    if c.email == §`)).toEqual(["customer", "c", "query", "search", "log", "load", "create", "copy", "transform", "true", "false"]);
-    expect(labels(`scheduled {\n    if true {\n        let inner = "x"\n    }\n    log.debug(§)\n}\n`)).toEqual(["query", "search", "log", "load", "create", "copy", "transform", "true", "false"]);
+    expect(labels(`${UE}    let c = load Customer(1)\n    if c.email == §`)).toEqual(["customer", "c", "query", "search", "lookup", "log", "load", "create", "copy", "transform", "true", "false"]);
+    expect(labels(`scheduled {\n    if true {\n        let inner = "x"\n    }\n    log.debug(§)\n}\n`)).toEqual(["query", "search", "lookup", "log", "load", "create", "copy", "transform", "true", "false"]);
     const { doc, offset } = at(`${UE}    save §`);
     expect(completionsAt(doc, offset)[0]).toMatchObject({ label: "customer", detail: "Customer (context record, saved by NetSuite)" });
   });
@@ -212,11 +212,11 @@ describe("lsp: completion", () => {
     expect(labels(`beforeSubmit edit (customer: Cus§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
     expect(labels(`${UE}    customer.§`)).toEqual(["comments", "email", "entityid"]);
     expect(labels(`${UE}    customer.§\n    save customer\n}\n`)).toEqual(["comments", "email", "entityid"]);
-    expect(labels(`scheduled {\n    let c = load Cus§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice"]);
+    expect(labels(`scheduled {\n    let c = load Cus§`)).toEqual(["Customer", "SalesOrder", "MyntLog", "Invoice", "Search", "File"]);
     // A broken statement earlier in the block does not take the parameter out of scope.
     expect(labels(`${UE}    customer.comments = \n    customer. = "x"\n    customer.§\n}\n`)).toEqual(["comments", "email", "entityid"]);
     // A let whose initializer failed is not in scope, but everything else is.
-    expect(labels(`scheduled {\n    let a = load Customer(1)\n    let b = load Nope("2")\n    §\n}\n`)).toEqual(["let", "if", "save", "delete", "for", "add", "remove", "return", "try", "a", "query", "search", "log", "load", "create", "copy", "transform"]);
+    expect(labels(`scheduled {\n    let a = load Customer(1)\n    let b = load Nope("2")\n    §\n}\n`)).toEqual(["let", "if", "save", "delete", "for", "add", "remove", "return", "try", "a", "query", "search", "lookup", "log", "load", "create", "copy", "transform"]);
   });
 
   it("offers nothing for member chains that are not records, inside strings, or after unknown names", () => {

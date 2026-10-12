@@ -64,6 +64,7 @@ const MODULE_LOCAL_NAMES: Record<NetSuiteModule, string> = {
   "N/record": "record",
   "N/query": "query",
   "N/search": "search",
+  "N/file": "file",
 };
 
 /** `query.Operator` members for each Mynt comparison, on Text/Number fields. */
@@ -812,6 +813,7 @@ function collectLocalNames(unit: ScriptUnit): Set<string> {
   for (const body of bodies(unit)) {
     forEachStatement(body, (statement) => {
       if (statement.kind === "LocalDeclaration") names.add(statement.local.name);
+      if (statement.kind === "Destructure") for (const binding of statement.bindings) names.add(binding.local.name);
       if (statement.kind === "ForEach") names.add(statement.local.name);
       if (statement.kind === "TryCatch" && statement.binding) names.add(statement.binding.name);
     });
@@ -900,6 +902,12 @@ function emitStatement(writer: Writer, statement: BoundStatement, context: EmitC
       writer.line(`const ${statement.local.name} = ${emitExpression(statement.initializer, context)};`);
       const captured = context.capturedId(statement.local);
       if (captured) writer.line(`let ${captured};`);
+      return;
+    }
+    case "Destructure": {
+      // A projection is a plain object keyed by field id, so JavaScript's own destructuring binds it, evaluating the source once.
+      const pattern = statement.bindings.map((b) => (b.local.name === b.field.id ? b.field.id : `${b.field.id}: ${b.local.name}`)).join(", ");
+      writer.line(`const { ${pattern} } = ${emitExpression(statement.source, context)};`);
       return;
     }
     case "TryCatch": {
@@ -1152,6 +1160,10 @@ function emitExpression(expression: BoundExpression, context: EmitContext): stri
       return emitIdAsString(expression.id, context);
     case "Lookup":
       return emitLookup(expression, context);
+    case "FileLoad": {
+      const file = context.moduleLocal("N/file");
+      return `${file}.load(${objectLiteral([["id", emitRecordId(expression.id, context)]])})`;
+    }
     case "Query":
       return expression.operation === "search" ? emitSearch(expression, context) : emitQuery(expression, context);
     case "QueryField":

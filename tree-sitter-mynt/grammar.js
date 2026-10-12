@@ -99,7 +99,17 @@ module.exports = grammar({
 
     _terminator: ($) => choice($._newline_terminator, ";"),
 
-    let_statement: ($) => seq("let", field("name", $.identifier), "=", field("value", $._expression)),
+    /** `let x = ...`, or `let { email, comments: note } = ...`: a name, or a shallow pattern over a structured value's fields. */
+    // A pattern's value is optional here only so a pattern cut short recovers with one missing `}`; the compiler requires it.
+    let_statement: ($) =>
+      seq(
+        "let",
+        choice(seq(field("name", $.identifier), "=", field("value", $._expression)), seq(field("pattern", $.object_pattern), optional(seq("=", field("value", $._expression))))),
+      ),
+
+    object_pattern: ($) => seq("{", optional(seq($.pattern_field, repeat(seq(",", $.pattern_field)), optional(","))), "}"),
+
+    pattern_field: ($) => seq(field("source", $.identifier), optional(seq(":", field("local", $.identifier)))),
 
     save_statement: ($) => seq("save", field("target", $._expression)),
 
@@ -146,7 +156,6 @@ module.exports = grammar({
         $.member_expression,
         $.call_expression,
         $.projection_expression,
-        $.saved_search,
         $.query_expression,
         $.or_expression,
         $.binary_expression,
@@ -194,7 +203,8 @@ module.exports = grammar({
      * reads `query` and `search` as keywords only when a record type follows,
      * which is the bare-type-call shape above, so `search Customer` is a
      * call_expression here and `search` stays an ordinary identifier
-     * elsewhere (`let search = 1`). Only the `where` clause needs its own node.
+     * elsewhere (`let search = 1`). A saved search is `load Search("id")`,
+     * a call_expression too, so it takes the same clauses.
      */
     /**
      * A search with clauses: `where`, `select`, `order by`, `group by`, `limit`, `first`, in any
@@ -213,8 +223,14 @@ module.exports = grammar({
      */
     or_expression: ($) => prec.right(PREC.or, seq(field("value", $._expression), "or", field("branch", choice($.return_statement, $.block)))),
 
+    /**
+     * `lookup Customer(123)[email]` and `lookup customer select email` need
+     * no rule of their own: `lookup X(...)` is the bare-type-call shape
+     * (like `search Customer`), the projection and the select clause attach
+     * as they do to any call, and `lookup` stays an identifier elsewhere.
+     */
     query_expression: ($) =>
-      prec.right(PREC.where + 1, seq(field("query", choice($.call_expression, $.saved_search)), repeat1(field("clause", $._search_clause)))),
+      prec.right(PREC.where + 1, seq(field("query", $.call_expression), repeat1(field("clause", $._search_clause)))),
 
     _search_clause: ($) => choice($.where_clause, $.select_clause, $.order_clause, $.group_clause, $.limit_clause, $.first_clause),
 
@@ -257,25 +273,6 @@ module.exports = grammar({
     _field_path: ($) => choice($.identifier, alias($.joined_field, $.member_expression)),
 
     joined_field: ($) => prec(1, seq(field("object", $.identifier), ".", field("property", $.identifier))),
-
-    /**
-     * `search saved "customsearch_x"` / `search saved Customer "customsearch_x"`:
-     * a saved search named by its script id, a string or a name, with the
-     * record type written only when the id does not carry it. `saved` is
-     * contextual, like `where`: a keyword after the search callee, an
-     * identifier elsewhere. A name right after `saved` is the type when an
-     * id follows it, else the id. Both parts are optional so a line cut
-     * short after `saved` still ends at its newline (the compiler reports).
-     */
-    saved_search: ($) =>
-      prec.right(
-        PREC.where + 1,
-        seq(
-          field("function", $.identifier),
-          "saved",
-          optional(choice(seq(field("type", alias($.identifier, $.type_identifier)), field("id", choice($.string, $.identifier))), field("id", choice($.string, $.identifier)))),
-        ),
-      ),
 
     binary_expression: ($) =>
       choice(

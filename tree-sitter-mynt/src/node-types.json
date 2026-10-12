@@ -58,10 +58,6 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
@@ -183,10 +179,6 @@
           "named": true
         },
         {
-          "type": "saved_search",
-          "named": true
-        },
-        {
           "type": "string",
           "named": true
         },
@@ -246,10 +238,6 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
@@ -301,10 +289,6 @@
           },
           {
             "type": "query_expression",
-            "named": true
-          },
-          {
-            "type": "saved_search",
             "named": true
           },
           {
@@ -365,10 +349,6 @@
           },
           {
             "type": "query_expression",
-            "named": true
-          },
-          {
-            "type": "saved_search",
             "named": true
           },
           {
@@ -469,10 +449,6 @@
           },
           {
             "type": "query_expression",
-            "named": true
-          },
-          {
-            "type": "saved_search",
             "named": true
           },
           {
@@ -606,10 +582,6 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
@@ -698,10 +670,6 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
@@ -778,10 +746,6 @@
           "named": true
         },
         {
-          "type": "saved_search",
-          "named": true
-        },
-        {
           "type": "string",
           "named": true
         },
@@ -848,10 +812,6 @@
           },
           {
             "type": "query_expression",
-            "named": true
-          },
-          {
-            "type": "saved_search",
             "named": true
           },
           {
@@ -1010,10 +970,6 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
@@ -1041,7 +997,7 @@
     "fields": {
       "name": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "identifier",
@@ -1049,9 +1005,19 @@
           }
         ]
       },
+      "pattern": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "object_pattern",
+            "named": true
+          }
+        ]
+      },
       "value": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "binary_expression",
@@ -1091,10 +1057,6 @@
           },
           {
             "type": "query_expression",
-            "named": true
-          },
-          {
-            "type": "saved_search",
             "named": true
           },
           {
@@ -1158,10 +1120,6 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
@@ -1222,10 +1180,6 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
@@ -1245,6 +1199,21 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "object_pattern",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "pattern_field",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -1307,10 +1276,6 @@
           },
           {
             "type": "query_expression",
-            "named": true
-          },
-          {
-            "type": "saved_search",
             "named": true
           },
           {
@@ -1435,10 +1400,6 @@
           "named": true
         },
         {
-          "type": "saved_search",
-          "named": true
-        },
-        {
           "type": "string",
           "named": true
         },
@@ -1447,6 +1408,32 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "pattern_field",
+    "named": true,
+    "fields": {
+      "local": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "source": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -1510,10 +1497,6 @@
           },
           {
             "type": "query_expression",
-            "named": true
-          },
-          {
-            "type": "saved_search",
             "named": true
           },
           {
@@ -1585,10 +1568,6 @@
           {
             "type": "call_expression",
             "named": true
-          },
-          {
-            "type": "saved_search",
-            "named": true
           }
         ]
       }
@@ -1640,10 +1619,6 @@
           },
           {
             "type": "query_expression",
-            "named": true
-          },
-          {
-            "type": "saved_search",
             "named": true
           },
           {
@@ -1707,10 +1682,6 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
@@ -1771,55 +1742,11 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
           {
             "type": "unary_expression",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
-    "type": "saved_search",
-    "named": true,
-    "fields": {
-      "function": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      },
-      "id": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "string",
-            "named": true
-          }
-        ]
-      },
-      "type": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "type_identifier",
             "named": true
           }
         ]
@@ -2040,10 +1967,6 @@
             "named": true
           },
           {
-            "type": "saved_search",
-            "named": true
-          },
-          {
             "type": "string",
             "named": true
           },
@@ -2157,10 +2080,6 @@
           },
           {
             "type": "query_expression",
-            "named": true
-          },
-          {
-            "type": "saved_search",
             "named": true
           },
           {
@@ -2390,10 +2309,6 @@
   },
   {
     "type": "save",
-    "named": false
-  },
-  {
-    "type": "saved",
     "named": false
   },
   {

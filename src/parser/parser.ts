@@ -29,7 +29,12 @@ import {
   type SavedSearchClause,
   type SearchClause,
   type SelectItem,
+  type SelectClause,
   type AggregateCall,
+  type LookupExpression,
+  type CallExpression,
+  type ObjectPattern,
+  type PatternField,
   type SortKey,
   QUERY_OPERATIONS,
   AGGREGATE_FUNCTIONS,
@@ -199,6 +204,8 @@ export function parse(source: string, file: string, diagnostics: DiagnosticBag):
 }
 
 class Parser {
+  /** Set by a construct cut short where the lexer emits no terminator, so the statement after it is not swallowed. */
+  private cutShort = false;
   private index = 0;
 
   constructor(
@@ -432,6 +439,11 @@ class Parser {
 
   private parseStatement(): Statement {
     const statement = this.parseStatementBody();
+    // A statement cut short where no terminator is emitted (after `{`, `,`, or `[`) already reported itself; the next line is the next statement.
+    if (this.cutShort) {
+      this.cutShort = false;
+      if (this.atStatementStart() || (this.at("Identifier") && this.peek().text === "let")) return statement;
+    }
     // A bad terminator does not discard the statement that was just parsed
     // correctly: report it, skip to the end of the line, keep the statement.
     try {
@@ -444,8 +456,8 @@ class Parser {
   }
 
   private parseStatementBody(): Statement {
-    // `let` is contextual: it begins a declaration only when a name follows.
-    if (this.at("Identifier") && this.peek().text === "let" && this.peek(1).kind === "Identifier") {
+    // `let` is contextual: it begins a declaration only when a name or a `{` pattern follows.
+    if (this.at("Identifier") && this.peek().text === "let" && (this.peek(1).kind === "Identifier" || this.peek(1).kind === "LBrace")) {
       return this.parseLet();
     }
 
@@ -498,10 +510,19 @@ class Parser {
 
   private parseLet(): LetStatement {
     const keyword = this.next();
-    const name = this.parseBindingName("as the variable name");
+    let name: Identifier | undefined;
+    let pattern: ObjectPattern | undefined;
+    if (this.at("LBrace")) pattern = this.parseObjectPattern();
+    else name = this.parseBindingName("as the variable name");
+    if (pattern && !pattern.closeSpan && !this.at("Equals")) {
+      this.cutShort = true;
+      // Cut short before its value (the pattern reported it): keep the declaration for the editor and leave the next statement alone.
+      const initializer: Identifier = { kind: "Identifier", name: "", span: { start: pattern.span.end, end: pattern.span.end } };
+      return { kind: "LetStatement", keywordSpan: keyword.span, name, pattern, initializer, span: spanFrom(keyword.span, pattern.span) };
+    }
     if (!this.at("Equals")) {
       this.fail(
-        `Expected '=' after 'let ${name.name}' (an initializer is required), found ${describe(this.peek())}`,
+        `Expected '=' after 'let ${name ? name.name : "{ ... }"}' (an initializer is required), found ${describe(this.peek())}`,
         this.peek().span,
       );
     }
@@ -511,9 +532,68 @@ class Parser {
       kind: "LetStatement",
       keywordSpan: keyword.span,
       name,
+      pattern,
       initializer,
       span: spanFrom(keyword.span, initializer.span),
     };
+  }
+
+  /**
+   * `{ email, comments: note }`: a shallow binding pattern. Each entry is a
+   * field name, optionally `: local`. A pattern cut short at a line's end
+   * is reported and kept, so completion sees the fields listed so far.
+   */
+  private parseObjectPattern(): ObjectPattern {
+    const open = this.next();
+    const fields: PatternField[] = [];
+    let closeSpan: Span | undefined;
+    // A pattern cut short runs into the next line: a statement word, or a name that is called or assigned, ends it.
+    const stop = (): boolean => this.at("RBrace") || this.at("Terminator") || this.at("EOF") || this.at("Equals") || this.atStatementStart();
+    if (!stop()) {
+      for (;;) {
+        const source = this.parseBindingName("as a field to bind");
+        let local = source;
+        let colonSpan: Span | undefined;
+        if (this.at("Colon")) {
+          colonSpan = this.next().span;
+          local = this.parseBindingName("as the local name after ':'");
+        }
+        fields.push({ kind: "PatternField", source, local, colonSpan, span: spanFrom(source.span, local.span) });
+        if (!this.at("Comma")) break;
+        this.next();
+        if (stop()) break; // a trailing comma, or a list cut short
+      }
+    }
+    if (this.at("RBrace")) closeSpan = this.next().span;
+    else {
+      this.diagnostics.error(
+        DiagnosticCode.SyntaxError,
+        fields.length === 0 ? `Expected the fields to bind after '{', like 'let { email, comments } = ...', found ${describe(this.peek())}` : `Expected '}' to close the binding pattern, found ${describe(this.peek())}`,
+        this.peek().span,
+      );
+    }
+    const end = closeSpan ?? fields[fields.length - 1]?.span ?? open.span;
+    return { kind: "ObjectPattern", fields, openSpan: open.span, closeSpan, span: spanFrom(open.span, end) };
+  }
+
+  /**
+   * `lookup <receiver>`, with the fields in the receiver's `[...]` or in a
+   * `select` clause that may begin the next line. The receiver is a postfix
+   * expression, so `lookup Customer(123)[email]` keeps its projection and
+   * `lookup customer select email` stops before the clause.
+   */
+  private parseLookup(): LookupExpression {
+    const keyword = this.next();
+    const receiver = this.parsePostfix();
+    let select: SelectClause | undefined;
+    const at = this.at("Terminator") ? 1 : 0;
+    const word = this.peek(at);
+    if (word.kind === "Identifier" && word.text === "select") {
+      if (at === 1) this.next();
+      const clause = this.parseSearchClause();
+      if (clause.kind === "SelectClause") select = clause;
+    }
+    return { kind: "LookupExpression", keywordSpan: keyword.span, receiver, select, span: spanFrom(keyword.span, (select ?? receiver).span) };
   }
 
   /**
@@ -686,44 +766,39 @@ class Parser {
 
   private parseQuery(operation: QueryOperation): QueryExpression {
     const keyword = this.next();
-    let recordType: Identifier | undefined;
-    let saved: SavedSearchClause | undefined;
     if (this.at("Identifier") && this.peek().text === "saved") {
-      // `saved "customsearch_x"` or `saved Customer "customsearch_x"`: a saved
-      // search. A name right after `saved` is the record type when an id
-      // follows it on the same line, otherwise it is the id itself (a local).
-      const savedKeyword = this.next();
-      if (operation !== "search") {
-        this.fail(`'saved' loads a saved search and belongs to 'search'; write 'search saved ...' (query is N/query, which has no saved searches)`, savedKeyword.span);
-      }
-      saved = { kind: "SavedSearchClause", keywordSpan: savedKeyword.span, id: undefined, span: savedKeyword.span };
-      const next = this.peek(1);
-      if (this.at("Identifier") && this.peek().text !== "where" && (next.kind === "String" || (next.kind === "Identifier" && next.text !== "where"))) {
-        recordType = this.parseIdentifier();
-      }
-      if (this.at("String") || (this.at("Identifier") && this.peek().text !== "where")) {
-        saved.id = this.parsePrimary();
-        saved.span = spanFrom(savedKeyword.span, saved.id.span);
-      } else if (this.at("Number")) {
-        this.fail(
-          `A saved search is named by its script id, a string like "customsearch_active_customers", not a number; numeric internal ids are not accepted`,
-          this.peek().span,
-        );
-      } else {
-        // Report, and keep the search so what was written still binds while typing.
-        this.diagnostics.error(
-          DiagnosticCode.SyntaxError,
-          `Expected a saved search id after 'saved${recordType ? ` ${recordType.name}` : ""}', like "customsearch_active_customers", found ${describe(this.peek())}`,
-          this.peek().span,
-        );
-      }
-    } else {
-      recordType = this.parseIdentifier(`as the record type to ${operation}`);
-      if (this.at("Identifier") && this.peek().text === "using") {
-        // The pre-release spelling. Point at the current one rather than reporting a bare syntax error.
-        this.fail(`Saved searches are written 'search saved "customsearch_x"' (or 'search saved ${recordType.name} "customsearch_x"' to state the type); 'using' is no longer part of Mynt`, this.peek().span);
-      }
+      // The pre-release spelling of a saved search. Point at the current one rather than reporting a bare syntax error.
+      const id = this.peek(1).kind === "String" ? this.peek(1).text : this.peek(2).kind === "String" ? this.peek(2).text : '"customsearch_x"';
+      this.fail(`Saved searches are loaded with 'load Search(${id})'; '${operation} saved' is no longer part of Mynt`, this.peek().span);
     }
+    const recordType = this.parseIdentifier(`as the record type to ${operation}`);
+    if (this.at("Identifier") && this.peek().text === "using") {
+      // The pre-release spelling. Point at the current one rather than reporting a bare syntax error.
+      this.fail(`Saved searches are loaded with 'load Search("customsearch_x")'; 'using' is no longer part of Mynt`, this.peek().span);
+    }
+    return this.finishQuery(operation, keyword.span, recordType, undefined);
+  }
+
+  /**
+   * `load Search("customsearch_x")`: a saved search as a search source,
+   * built from the call the postfix parser read. The id is the one
+   * argument; the clauses follow as after `search T`.
+   */
+  private finishSavedSearch(call: CallExpression): QueryExpression {
+    const typeSpan = call.typeArgument!.span;
+    const saved: SavedSearchClause = { kind: "SavedSearchClause", keywordSpan: typeSpan, id: call.arguments[0], span: spanFrom(typeSpan, call.span) };
+    if (call.arguments.length === 0) {
+      this.diagnostics.error(DiagnosticCode.SyntaxError, `Expected the saved search's script id, like 'load Search("customsearch_active_customers")'`, { start: call.span.end, end: call.span.end });
+    } else if (call.arguments.length > 1) {
+      this.diagnostics.error(DiagnosticCode.SyntaxError, `'load Search(...)' takes one argument, the script id; found ${call.arguments.length}`, call.arguments[1]!.span);
+    } else if (call.arguments[0]!.kind === "NumberLiteral") {
+      this.fail(`A saved search is named by its script id, a string like "customsearch_active_customers", not a number; numeric internal ids are not accepted`, call.arguments[0]!.span);
+    }
+    return this.finishQuery("search", call.callee.span, undefined, saved);
+  }
+
+  /** The clauses of a search, in any order, each possibly starting the next line, then the expression. */
+  private finishQuery(operation: QueryOperation, keywordSpan: Span, recordType: Identifier | undefined, saved: SavedSearchClause | undefined): QueryExpression {
     // Clauses, in any order. Each may start the next line: look past one terminator for a clause word.
     const clauses: SearchClause[] = [];
     for (;;) {
@@ -738,13 +813,13 @@ class Parser {
     return {
       kind: "QueryExpression",
       operation,
-      keywordSpan: keyword.span,
+      keywordSpan,
       recordType,
       saved,
       clauses,
       whereSpan: where?.keywordSpan,
       condition: where?.condition,
-      span: spanFrom(keyword.span, (last ?? saved?.id ?? recordType ?? { span: saved?.keywordSpan ?? keyword.span }).span),
+      span: spanFrom(keywordSpan, (last ?? saved ?? recordType ?? { span: keywordSpan }).span),
     };
   }
 
@@ -1026,7 +1101,10 @@ class Parser {
         expression = { ...expression, targetType, toSpan, span: spanFrom(expression.span, targetType.span) };
       } else if (
         this.at("LParen") ||
-        (this.at("Identifier") && (expression.kind === "Identifier" || this.peek(1).kind === "LParen"))
+        (this.at("Identifier") &&
+          (expression.kind === "Identifier" || this.peek(1).kind === "LParen") &&
+          // `lookup customer select email`: a clause word ends the receiver; it is never a type argument.
+          !(SEARCH_CLAUSE_KEYWORDS.includes(this.peek().text) && this.peek(1).kind !== "LParen"))
       ) {
         // `callee(args)`, `callee Type(args)`, or `callee Type`: after a bare
         // identifier, a record type alone is a call with no argument list, as
@@ -1048,6 +1126,10 @@ class Parser {
           toSpan: undefined,
           span: spanFrom(expression.span, end),
         };
+        // `load Search(id)` is a search source: a saved search, which takes clauses like `search T`.
+        if (expression.callee.kind === "Identifier" && expression.callee.name === "load" && typeArgument?.name === "Search") {
+          return this.finishSavedSearch(expression);
+        }
       } else if (this.at("LBracket")) {
         expression = this.parseProjection(expression);
       } else if (this.at("String") && this.peek(1).kind === "LParen") {
@@ -1085,6 +1167,11 @@ class Parser {
         this.fail(`Expected a field name inside '[...]', found string ${token.text}. Fields are written without quotes, like [${token.value ?? "email"}]`, token.span);
       }
       if (this.at("Terminator") || this.at("EOF") || this.at("RBrace")) return incomplete(this.peek());
+      // `[` or `,` at a line's end emits no terminator: a statement word or a call on the next line ends the list.
+      if (this.atStatementStart() || (this.at("Identifier") && this.peek().text === "let" && this.peek(1).kind !== "Comma" && this.peek(1).kind !== "RBracket")) {
+        this.cutShort = true;
+        return incomplete(this.peek());
+      }
       fields.push(this.parseIdentifier("as a field name inside '[...]'"));
       if (this.at("Comma")) {
         this.next();
@@ -1122,6 +1209,10 @@ class Parser {
     }
     if (token.kind === "Identifier" && (QUERY_OPERATIONS as readonly string[]).includes(token.text) && this.peek(1).kind === "Identifier") {
       return this.parseQuery(token.text as QueryOperation);
+    }
+    // `lookup <expression>`: the operation, when an expression follows on the same line; `lookup(...)` or `lookup` alone is a name.
+    if (token.kind === "Identifier" && token.text === "lookup" && this.peek(1).kind === "Identifier") {
+      return this.parseLookup();
     }
     if (token.kind === "Identifier") return this.parseIdentifier();
     if (token.kind === "LParen") {

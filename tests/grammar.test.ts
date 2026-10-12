@@ -140,14 +140,24 @@ describe.skipIf(skip)("tree-sitter grammar", () => {
     expect(captures).toMatch(/keyword.*`where`/);
     expect(captures).toMatch(/variable.*`search`/);
     expect(captures).not.toMatch(/keyword.*`search`/);
-    // A saved search: `saved` is a keyword there and an identifier elsewhere; `search` stays the builtin operation.
-    const saved = run(["query", HIGHLIGHTS, scratch(".saved.mn", `scheduled {\n    let saved = "x"\n    for c in search saved "customsearch_x" where email !== "" {\n    }\n    let n = search saved SystemNote "customsearch_notes"\n}\n`)]);
-    expect(saved).toMatch(/keyword.*`saved`/);
+    // A saved search is `load Search(id)`: `load` the builtin operation, `Search` a type, the id a string; `saved` is just a name now.
+    const saved = run(["query", HIGHLIGHTS, scratch(".saved.mn", `scheduled {\n    let saved = "x"\n    for c in load Search("customsearch_x") where email !== "" {\n    }\n    let n = load Search("customsearch_notes")\n}\n`)]);
     expect(saved).toMatch(/variable.*`saved`/);
-    expect(saved).toMatch(/function\.builtin.*`search`/);
+    expect(saved).not.toMatch(/keyword.*`saved`/);
+    expect(saved).toMatch(/function\.builtin.*`load`/);
+    expect(saved).toMatch(/- type, .*`Search`/);
     expect(saved).toMatch(/string.*`"customsearch_x"`/);
-    expect(saved).toMatch(/- type, .*`SystemNote`/);
-    expect(parseTree(scratch(".saved.mn", `scheduled {\n    let c = search saved\n    let d = search saved "\n    let e = search saved Customer\n    let f = search saved Customer "\n    log.debug("next")\n}\n`))).toMatch(/(\(saved_search[\s\S]*){4}/);
+    expect(saved).toMatch(/keyword.*`where`/);
+    expect(parseTree(scratch(".saved.mn", `scheduled {\n    let d = load Search("customsearch_x")\n        where email !== ""\n        select email\n    let f = load Search(\n    log.debug("next")\n}\n`))).toMatch(/query_expression[\s\S]*where_clause[\s\S]*select_clause/);
+    // `lookup` and a destructuring pattern: the operation is a builtin, pattern locals are variables, an aliased source is a property.
+    const lookup = run(["query", HIGHLIGHTS, scratch(".lookup.mn", `scheduled {\n    let lookup = "x"\n    let info = lookup Customer(123)\n        select email, comments\n    let { email, comments: note } = info\n    let other = Customer(1)[email]\n}\n`)]);
+    expect(lookup).toMatch(/function\.builtin.*`lookup`/);
+    expect(lookup).toMatch(/variable.*`lookup`/);
+    expect(lookup).toMatch(/keyword.*`select`/);
+    expect(lookup).toMatch(/variable.*`note`/);
+    expect(lookup).toMatch(/property.*`comments`/);
+    expect(parseTree(scratch(".lookup.mn", `scheduled {\n    let info = lookup Customer(123)\n        select email, comments\n    let { email, comments: note } = info\n    let { a } = lookup c[a, b]\n}\n`))).toMatch(/query_expression[\s\S]*select_clause[\s\S]*object_pattern[\s\S]*pattern_field[\s\S]*projection_expression/);
+    expect(parseTree(scratch(".lookup.mn", `scheduled {\n    let {\n    let { email,\n    let y = lookup Customer(1)\n        select\n    log.debug("next")\n}\n`))).toMatch(/\(expression_statement[^\n]*\n\s+\(call_expression[\s\S]*\(string \[5, 14\]/);
     // Search clauses: the clause words are keywords in a search and identifiers elsewhere; selected and sort fields are properties.
     const clauses = run(["query", HIGHLIGHTS, scratch(".clauses.mn", `scheduled {\n    let select = "x"\n    let o = search SalesOrder\n        select memo, entity.email\n        where total > 1\n        order by total desc, memo asc\n        limit 5\n    let p = search SalesOrder first\n}\n`)]);
     for (const word of ["select", "where", "order", "by", "asc", "desc", "limit", "first"]) expect(clauses).toMatch(new RegExp(`keyword, .*\\\`${word}\\\``));

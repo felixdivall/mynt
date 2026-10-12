@@ -102,6 +102,8 @@ export const DiagnosticCode = {
   UngroupedField: "MYNT1061",
   InvalidAggregate: "MYNT1062",
   ResultName: "MYNT1063",
+  LookupWithoutFields: "MYNT1064",
+  DestructureShape: "MYNT1065",
   UnsavedMutation: "MYNT2001",
 } as const;
 

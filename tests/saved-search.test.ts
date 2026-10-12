@@ -1,9 +1,10 @@
 /**
- * Saved searches: `search saved "customsearch_x"` loads an existing
+ * Saved searches: `load Search("customsearch_x")` loads an existing
  * N/search saved search and exposes it as the same typed, read-only rows
  * as `search T`. The result type is inferred from the account snapshot's
- * saved-search metadata, written only when the snapshot cannot say or to
- * assert it. The saved search is used as defined (its filters and columns
+ * saved-search metadata; an id the snapshot does not know, or a dynamic
+ * id, is an error, since nothing in source states the type. The saved
+ * search is used as defined (its filters and columns
  * stay), the fields the program reads are appended to the loaded search in
  * memory, a `where` is AND-ed onto its filters, and the stored definition
  * is never written. Uses the reference fixture (tests/helpers.ts), whose
@@ -92,8 +93,8 @@ const run = (js: string, netsuite = seeded()) => {
 };
 
 describe("saved search: syntax and inference", () => {
-  it("search saved <literal> infers the record type from the snapshot; downstream it is an ordinary search", () => {
-    const result = compileRefs(scheduled(`    let customers = search saved "customsearch_customers"\n    for c in customers {\n        log.debug(c.email)\n    }`));
+  it("load Search(<literal>) infers the record type from the snapshot; downstream it is an ordinary search", () => {
+    const result = compileRefs(scheduled(`    let customers = load Search("customsearch_customers")\n    for c in customers {\n        log.debug(c.email)\n    }`));
     expect(result.diagnostics).toEqual([]);
     const declaration = result.unit!.kind === "Scheduled" ? result.unit!.entryPoint.body[0]! : undefined;
     expect(declaration).toMatchObject({
@@ -105,62 +106,59 @@ describe("saved search: syntax and inference", () => {
         type: { kind: "Sequence", source: "search", element: { record: { name: "Customer" }, origin: "search" } },
       },
     });
-    expect(type(scheduled(`    let customers = search saved "customsearch_customers"\n    for c in custo§mers { }`))).toBe("Sequence<Customer>");
-    expect(type(scheduled(`    let orders = search saved "customsearch_open_orders"\n    for o in orders {\n        log.debug(o.me§mo)\n    }`))).toBe("string");
+    expect(type(scheduled(`    let customers = load Search("customsearch_customers")\n    for c in custo§mers { }`))).toBe("Sequence<Customer>");
+    expect(type(scheduled(`    let orders = load Search("customsearch_open_orders")\n    for o in orders {\n        log.debug(o.me§mo)\n    }`))).toBe("string");
     expect([...result.unit!.dependencies].sort()).toEqual(["N/log", "N/search"]);
   });
 
-  it("an explicit type is accepted when it agrees with the snapshot, required for an unknown or dynamic id, and checked otherwise", () => {
-    expect(messages(scheduled(`    let c = search saved Customer "customsearch_customers"\n    for x in c { }`))).toEqual([]);
-    expect(messages(scheduled(`    let c = search saved Customer "customsearch_unknown"\n    for x in c { }`))).toEqual([]);
-    expect(messages(scheduled(`    let id = "customsearch_customers"\n    let c = search saved Customer id\n    for x in c { }`))).toEqual([]);
-    expect(first(scheduled(`    let c = search saved "customsearch_unknown"`))).toBe(
-      'MYNT1054 The current account snapshot does not know the result type of saved search "customsearch_unknown". Write \'search saved Customer "customsearch_unknown"\' (with its record type) to provide the type explicitly',
+  it("an id the snapshot does not know, or a value, is an error: nothing in source states a saved search's result type", () => {
+    expect(first(scheduled(`    let c = load Search("customsearch_unknown")`))).toBe(
+      'MYNT1054 The current account snapshot does not list saved search "customsearch_unknown", so its result type is unknown. Pull a snapshot of the account that has it (\'mynt schema pull\'), or add it under \'savedSearches\' in the snapshot; known: customsearch_customers, customsearch_active_customers, customsearch_open_orders, customsearch_system_notes, customsearch_totals',
     );
-    expect(first(scheduled(`    let id = "customsearch_customers"\n    let c = search saved id`))).toBe(
-      "MYNT1054 The result type of a saved search named by a value cannot be inferred; write the record type, like 'search saved Customer id'",
+    expect(first(scheduled(`    let c = load Search("customsearch_customer")`))).toContain('Did you mean "customsearch_customers"?');
+    expect(first(scheduled(`    let id = "customsearch_customers"\n    let c = load Search(id)`))).toBe(
+      "MYNT1054 The result type of a saved search named by a value cannot be known at compile time: 'load Search(id)' would have rows of no known record type. Name the search by its literal script id, which the account snapshot knows",
     );
-    expect(first(scheduled(`    let c = search saved Customer "customsearch_open_orders"`))).toBe(
-      'MYNT1055 Saved search "customsearch_open_orders" returns SalesOrder, not Customer, according to the account snapshot',
-    );
-    expect(messages(scheduled(`    let c = search saved SalesOrder "customsearch_open_orders"\n    for x in c { }`))).toEqual([]);
-    const explicit = compileRefs(scheduled(`    let c = search saved Customer "customsearch_customers"\n    for x in c { }`));
-    expect(explicit.unit!.kind === "Scheduled" ? explicit.unit!.entryPoint.body[0] : undefined).toMatchObject({ initializer: { source: { recordFrom: "explicit" } } });
+    // Downstream the Search source carries the snapshot's record and search type.
+    const result = compileRefs(scheduled(`    let c = load Search("customsearch_system_notes")\n    for x in c { }`));
+    expect(result.unit!.kind === "Scheduled" ? result.unit!.entryPoint.body[0] : undefined).toMatchObject({ initializer: { source: { kind: "saved", recordFrom: "snapshot", loadType: "systemnote" }, recordType: { record: { name: "SystemNote" } } } });
   });
 
-  it("the id is a string, saved is contextual, query has no saved form, and `using` reports the new spelling", () => {
-    expect(first(scheduled(`    let s = search saved 5`))).toBe(
+  it("the id is one string; Search is a platform type, not a record; the old spellings point at load Search", () => {
+    expect(first(scheduled(`    let s = load Search(5)`))).toBe(
       'MYNT0001 A saved search is named by its script id, a string like "customsearch_active_customers", not a number; numeric internal ids are not accepted',
     );
-    expect(first(scheduled(`    let n = 5\n    let s = search saved Customer n`))).toBe('MYNT1052 A saved search is named by its script id, a string like "customsearch_active_customers", but received number');
-    expect(first(scheduled(`    let s = search saved Customer`))).toBe(
-      "MYNT1052 Expected the saved search id after the record type, like 'search saved Customer \"customsearch_x\"'; 'Customer' alone is a record type, not a script id",
-    );
-    expect(first(scheduled(`    let s = search saved Nope "customsearch_customers"`))).toContain("MYNT1001 Unknown record type 'Nope'");
-    expect(first(scheduled(`    let s = query saved "customsearch_customers"`))).toBe(
-      "MYNT0001 'saved' loads a saved search and belongs to 'search'; write 'search saved ...' (query is N/query, which has no saved searches)",
-    );
-    expect(first(scheduled(`    let s = search Customer using "customsearch_customers"`))).toBe(
-      "MYNT0001 Saved searches are written 'search saved \"customsearch_x\"' (or 'search saved Customer \"customsearch_x\"' to state the type); 'using' is no longer part of Mynt",
-    );
+    expect(first(scheduled(`    let n = 5\n    let s = load Search(n)`))).toBe('MYNT1052 A saved search is named by its script id, a string like "customsearch_active_customers", but received number');
+    expect(first(scheduled(`    let s = load Search(Customer)`))).toBe("MYNT1052 'Customer' is a record type, not a saved search id. Write the script id as a string: 'load Search(\"customsearch_x\")'");
+    expect(first(scheduled(`    let s = load Search()`))).toBe("MYNT0001 Expected the saved search's script id, like 'load Search(\"customsearch_active_customers\")'");
+    expect(first(scheduled(`    let s = load Search("a", "b")`))).toBe("MYNT0001 'load Search(...)' takes one argument, the script id; found 2");
+    expect(first(scheduled(`    let s = load Search`))).toBe("MYNT0001 Expected the saved search's script id, like 'load Search(\"customsearch_active_customers\")'");
+    expect(first(scheduled(`    let s = create Search`))).toBe("MYNT1018 'Search' is a platform type that can only be loaded: 'load Search(\"customsearch_active_customers\")'. create works on record types");
+    expect(first(scheduled(`    let s = search Search`))).toBe("MYNT1001 'Search' is a platform type, not a record type: it has no fields and is only loaded, 'load Search(\"customsearch_active_customers\")'");
+    expect(first(scheduled(`    let s = search saved "customsearch_customers"`))).toBe("MYNT0001 Saved searches are loaded with 'load Search(\"customsearch_customers\")'; 'search saved' is no longer part of Mynt");
+    expect(first(scheduled(`    let s = search saved Customer "customsearch_customers"`))).toBe("MYNT0001 Saved searches are loaded with 'load Search(\"customsearch_customers\")'; 'search saved' is no longer part of Mynt");
+    expect(first(scheduled(`    let s = query saved "customsearch_customers"`))).toContain("'query saved' is no longer part of Mynt");
+    expect(first(scheduled(`    let s = search Customer using "customsearch_customers"`))).toBe("MYNT0001 Saved searches are loaded with 'load Search(\"customsearch_x\")'; 'using' is no longer part of Mynt");
+    // `saved` and `Search` are not reserved anywhere else.
     expect(messages(scheduled(`    let saved = "x"\n    log.debug(saved)`))).toEqual([]);
     expect(messages(`fn saved(value: string): string {\n    return value\n}\nscheduled {\n    log.debug(saved("x"))\n}\n`)).toEqual([]);
-    const cut = compileRefs(scheduled(`    let s = search saved\n    let t = search saved Customer\n    log.debug("next")`));
-    expect(cut.diagnostics.map((d) => d.code)).toEqual(["MYNT0001", "MYNT1052"]);
-    expect(cut.diagnostics[0]!.message).toContain("Expected a saved search id after 'saved'");
+    const cut = compileRefs(scheduled(`    let s = load Search(\n    let t = load Search("customsearch_customers"\n    log.debug("next")`));
+    expect(cut.diagnostics.map((d) => d.code)).toEqual(["MYNT0001"]);
+    expect(cut.diagnostics[0]!.message).toContain("Expected ',' or ')' after argument");
   });
 
   it("rows are the ordinary read-only search rows, with where, joins, and references", () => {
-    expect(first(scheduled(`    for c in search saved "customsearch_customers" {\n        c.comments = "x"\n    }`))).toContain("MYNT1030 Search result 'c' is read-only");
-    expect(messages(scheduled(`    for o in search saved "customsearch_open_orders" where entity === Customer(123) && entity.email !== "" {\n        log.debug(o.entity.email)\n        log.debug(o.entity.text)\n        let r = load SalesOrder(o.id)\n        r.memo = "x"\n        save r\n    }`))).toEqual([]);
-    expect(first(scheduled(`    for c in search saved "customsearch_customers" where nope === "x" { }`))).toContain("MYNT1004 Customer has no field 'nope'");
+    expect(first(scheduled(`    for c in load Search("customsearch_customers") {\n        c.comments = "x"\n    }`))).toContain("MYNT1030 Search result 'c' is read-only");
+    expect(messages(scheduled(`    for o in load Search("customsearch_open_orders") where entity === Customer(123) && entity.email !== "" {\n        log.debug(o.entity.email)\n        log.debug(o.entity.text)\n        let r = load SalesOrder(o.id)\n        r.memo = "x"\n        save r\n    }`))).toEqual([]);
+    expect(first(scheduled(`    for c in load Search("customsearch_customers") where nope === "x" { }`))).toContain("MYNT1004 Customer has no field 'nope'");
   });
 });
 
 describe("saved search: execution", () => {
   it("loads by id alone, keeps the search's filters, pages every result, and exposes row.id", () => {
-    const js = output(scheduled(`    for c in search saved "customsearch_active_customers" {\n        log.debug(c.id)\n    }`));
+    const js = output(scheduled(`    for c in load Search("customsearch_active_customers") {\n        log.debug(c.id)\n    }`));
     expect(js).toContain('mynt$savedSearch(search.Type.CUSTOMER, "customsearch_active_customers", [], [])');
+    expect(js).not.toContain("search.load({ id: \"customsearch_active_customers\" })"); // the helper loads; source never names search.load
     expect(js).toContain("const s = search.load(loadType ? { id, type: loadType } : { id });");
     expect(js.split("function execute")[1]).not.toContain("getRange");
     const netsuite = run(js);
@@ -169,39 +167,35 @@ describe("saved search: execution", () => {
     expect(netsuite.log.calls.map((c) => c.details)).toEqual(["123", "125"]);
   });
 
-  it("an explicit type on an ordinary search still loads by id alone, and a dynamic id names the search at runtime", () => {
-    const js = output(scheduled(`    let searchId = "customsearch_active_customers"\n    for c in search saved Customer searchId {\n        log.debug(c.id)\n    }`));
-    expect(js).toContain("mynt$savedSearch(search.Type.CUSTOMER, searchId, [], [])");
-    expect(run(js).search.loadOptions).toEqual([{ id: "customsearch_active_customers" }]);
-  });
-
-  it("a standalone search type from the snapshot is passed to search.load, inferred or explicit", () => {
-    const inferred = output(scheduled(`    for n in search saved "customsearch_system_notes" {\n        log.debug(n.field)\n    }`));
+  it("a standalone search type from the snapshot is passed to search.load, without the author repeating it", () => {
+    const inferred = output(scheduled(`    for n in load Search("customsearch_system_notes") {\n        log.debug(n.field)\n    }`));
     expect(inferred).toContain('mynt$savedSearch("systemnote", "customsearch_system_notes", ["field"], [], undefined, "systemnote")');
     const netsuite = run(inferred);
     expect(netsuite.search.loadOptions).toEqual([{ id: "customsearch_system_notes", type: "systemnote" }]);
     expect(netsuite.log.calls.map((c) => c.details)).toEqual(["email"]);
-    const explicit = output(scheduled(`    for n in search saved SystemNote "customsearch_system_notes" where field === "email" {\n        log.debug(n.newvalue)\n    }`));
-    expect(explicit).toContain('["newvalue"], [], [["field", search.Operator.IS, "email"]], "systemnote")');
-    expect(run(explicit).log.calls.map((c) => c.details)).toEqual(["a@x.com"]);
+    const filtered = output(scheduled(`    for n in load Search("customsearch_system_notes") where field === "email" {\n        log.debug(n.newvalue)\n    }`));
+    expect(filtered).toContain('["newvalue"], [], [["field", search.Operator.IS, "email"]], "systemnote")');
+    expect(run(filtered).log.calls.map((c) => c.details)).toEqual(["a@x.com"]);
     // Without the type the fake, like NetSuite, refuses to load a standalone search; the snapshot is what spares the author that.
     expect(() => seeded().search.load({ id: "customsearch_system_notes" })).toThrow("standalone search type and needs type to load");
   });
 
-  it("the runtime check stays for a type the snapshot could not verify, and accepts the transaction family", () => {
+  it("the runtime check stays when the account disagrees with the snapshot, and accepts the transaction family", () => {
+    // The snapshot says customsearch_customers returns Customer; this account's search is over transactions.
     const netsuite = seeded();
-    netsuite.search.saveSearch("customsearch_mystery", OPEN_ORDERS);
-    const wrong = output(scheduled(`    for c in search saved Customer "customsearch_mystery" {\n        log.debug(c.id)\n    }`));
-    expect(() => run(wrong, netsuite)).toThrow("Mynt: saved search customsearch_mystery searches transaction records, but the script declares customer");
-    const family = output(scheduled(`    for o in search saved "customsearch_open_orders" {\n        log.debug(o.memo)\n    }`));
+    netsuite.search.saveSearch("customsearch_customers", OPEN_ORDERS);
+    const wrong = output(scheduled(`    for c in load Search("customsearch_customers") {\n        log.debug(c.id)\n    }`));
+    expect(() => run(wrong, netsuite)).toThrow("Mynt: saved search customsearch_customers searches transaction records, but the script declares customer");
+    const family = output(scheduled(`    for o in load Search("customsearch_open_orders") {\n        log.debug(o.memo)\n    }`));
     expect(family).toContain('mynt$savedSearch([search.Type.SALES_ORDER, "transaction"], "customsearch_open_orders", ["memo"], [])');
     expect(run(family).log.calls.map((c) => c.details)).toEqual(["first", "second", "third"]);
-    const missing = output(scheduled(`    for c in search saved Customer "customsearch_missing" {\n        log.debug(c.id)\n    }`));
-    expect(() => run(missing)).toThrow("Fake NetSuite has no saved search customsearch_missing");
+    // A search the snapshot knows but the account no longer has fails at runtime, as NetSuite would.
+    const missing = output(scheduled(`    for c in load Search("customsearch_totals") {\n        log.debug(c.id)\n    }`));
+    expect(() => run(missing)).toThrow("Fake NetSuite has no saved search customsearch_totals");
   });
 
   it("pages through a large saved search as the ad-hoc helper does", () => {
-    const js = output(scheduled(`    for c in search saved "customsearch_active_customers" {\n        log.debug(c.entityid)\n    }`));
+    const js = output(scheduled(`    for c in load Search("customsearch_active_customers") {\n        log.debug(c.entityid)\n    }`));
     const netsuite = seeded();
     for (let i = 1; i <= 2500; i++) netsuite.record.seed("customer", String(1000 + i), { email: `${i}@x.com`, entityid: `E${i}` });
     netsuite.load(js).execute!(scheduledContext());
@@ -211,18 +205,18 @@ describe("saved search: execution", () => {
 
 describe("saved search: columns and where", () => {
   it("the fields the program reads are planned and appended once, reusing a matching column; a joined or summarized column of the same name is not mistaken for the field", () => {
-    const js = output(scheduled(`    let customers = search saved "customsearch_active_customers"\n    for c in customers {\n        log.debug(c.email)\n        log.debug(c.comments)\n    }\n    for c in customers {\n        log.debug(c.comments)\n    }`));
+    const js = output(scheduled(`    let customers = load Search("customsearch_active_customers")\n    for c in customers {\n        log.debug(c.email)\n        log.debug(c.comments)\n    }\n    for c in customers {\n        log.debug(c.comments)\n    }`));
     expect(js).toContain('mynt$savedSearch(search.Type.CUSTOMER, "customsearch_active_customers", ["comments", "email"], [])');
     const netsuite = run(js);
     expect(netsuite.search.runs[0]!.columns).toEqual(["entityid", "email", "comments"]);
     expect(netsuite.log.calls.map((c) => c.details)).toEqual(["a@x.com", "", "c@x.com", "Done", "", "Done"]);
-    const orders = run(output(scheduled(`    for o in search saved "customsearch_open_orders" {\n        if o.total > 25 {\n            log.debug(o.memo)\n        }\n    }`)));
+    const orders = run(output(scheduled(`    for o in load Search("customsearch_open_orders") {\n        if o.total > 25 {\n            log.debug(o.memo)\n        }\n    }`)));
     expect(orders.search.runs[0]!.columns).toEqual(["memo", "customer.email", "SUM(total)", "total"]);
     expect(orders.log.calls.map((c) => c.details)).toEqual(["third"]);
   });
 
   it("select fields normalize like ad-hoc rows, and the stored definition is never written", () => {
-    const js = output(scheduled(`    for o in search saved "customsearch_open_orders" where entity === Customer(123) {\n        log.debug(o.entity.text)\n        if o.total > 1 {\n            log.debug(o.memo)\n        }\n    }`));
+    const js = output(scheduled(`    for o in load Search("customsearch_open_orders") where entity === Customer(123) {\n        log.debug(o.entity.text)\n        if o.total > 1 {\n            log.debug(o.memo)\n        }\n    }`));
     const netsuite = run(js);
     expect(netsuite.log.calls.map((c) => c.details)).toEqual(["Acme", "Acme", "third"]);
     expect(netsuite.search.savedDefinition("customsearch_open_orders")).toEqual(OPEN_ORDERS);
@@ -232,7 +226,7 @@ describe("saved search: columns and where", () => {
   });
 
   it("ANDs the Mynt filter onto the saved search's whole filter expression, preserving its nesting", () => {
-    const js = output(scheduled(`    for o in search saved "customsearch_open_orders" where total < 35 {\n        log.debug(o.memo)\n    }`));
+    const js = output(scheduled(`    for o in load Search("customsearch_open_orders") where total < 35 {\n        log.debug(o.memo)\n    }`));
     expect(js).toContain('mynt$savedSearch([search.Type.SALES_ORDER, "transaction"], "customsearch_open_orders", ["memo"], [], [["total", search.Operator.LESSTHAN, 35]])');
     const netsuite = run(js);
     expect(netsuite.search.runs[0]!.filters).toEqual([
@@ -253,7 +247,7 @@ describe("saved search: columns and where", () => {
     expect(netsuite.search.runs[0]!.filters).toEqual([[["email", "isnotempty", ""]], "and", [["comments", "isempty", ""]]]);
     expect(netsuite.record.loadCalls.map((c) => c.id)).toEqual(["123"]);
     expect(netsuite.record.persisted("customer", "123")).toMatchObject({ comments: "Reviewed by Mynt" });
-    // Without saved-search metadata (the builtin-style sample) the same source needs the explicit form.
+    // Without saved-search metadata (the builtin-style sample) the same source cannot know the result type.
     expect(compile(EXAMPLE, { file: "examples/saved-search.mn", schema: plainSchema }).diagnostics[0]!.code).toBe("MYNT1054");
   });
 });
@@ -271,57 +265,58 @@ describe("saved search: snapshot shape", () => {
       "customsearch_active_customers:Customer",
       "customsearch_open_orders:SalesOrder",
       "customsearch_system_notes:SystemNote:systemnote",
+      "customsearch_totals:SalesOrder",
     ]);
   });
 });
 
 describe("saved search: editor", () => {
-  it("completes the snapshot's script ids after saved, inside the string, and filtered by an explicit type", () => {
-    expect(site(scheduled(`    let s = search saved §`))).toBe("savedSearchId");
-    expect(labels(scheduled(`    let s = search saved §`))).toEqual(["customsearch_customers", "customsearch_active_customers", "customsearch_open_orders", "customsearch_system_notes"]);
-    expect(site(scheduled(`    let s = search saved "customsearch_c§"`))).toBe("savedSearchId|customsearch_c");
-    expect(labels(scheduled(`    let s = search saved "customsearch_c§"`))).toContain("customsearch_customers");
-    expect(site(scheduled(`    let s = search saved SalesOrder "§`))).toBe("savedSearchId:SalesOrder");
-    expect(labels(scheduled(`    let s = search saved SalesOrder "§`))).toEqual(["customsearch_open_orders"]);
-    expect(labels(scheduled(`    let id = "x"\n    let n = 1\n    let s = search saved Customer §`))).toEqual(["customsearch_customers", "customsearch_active_customers", "id"]);
-    const items = completionsAt(at(scheduled(`    let s = search saved §`)).doc, at(scheduled(`    let s = search saved §`)).offset);
+  it("completes the snapshot's script ids after load Search( and inside the string, and Search itself after load", () => {
+    expect(site(scheduled(`    let s = load Search(§`))).toBe("savedSearchId");
+    expect(labels(scheduled(`    let s = load Search(§`))).toEqual(["customsearch_customers", "customsearch_active_customers", "customsearch_open_orders", "customsearch_system_notes", "customsearch_totals"]);
+    expect(site(scheduled(`    let s = load Search("customsearch_c§")`))).toBe("savedSearchId|customsearch_c");
+    expect(labels(scheduled(`    let s = load Search("customsearch_c§")`))).toContain("customsearch_customers");
+    expect(labels(scheduled(`    let id = "x"\n    let n = 1\n    let s = load Search(§`))).toEqual(["customsearch_customers", "customsearch_active_customers", "customsearch_open_orders", "customsearch_system_notes", "customsearch_totals", "id"]);
+    const items = completionsAt(at(scheduled(`    let s = load Search(§`)).doc, at(scheduled(`    let s = load Search(§`)).offset);
     expect(items[0]).toMatchObject({ label: "customsearch_customers", detail: "Customer saved search" });
     expect(items[3]).toMatchObject({ label: "customsearch_system_notes", detail: "SystemNote saved search · standalone systemnote" });
+    expect(labels(scheduled(`    let s = load §`))).toContain("Search");
+    expect(labels(scheduled(`    let s = create §`))).not.toContain("Search");
     // A snapshot without saved searches offers only string locals.
-    const plain = analyze(scheduled(`    let id = "x"\n    let s = search saved `), "t.mn", plainSchema);
-    expect(completionsAt(plain, plain.text.indexOf("saved ") + 6).map((i) => i.label)).toEqual(["id"]);
+    const plain = analyze(scheduled(`    let id = "x"\n    let s = load Search(`), "t.mn", plainSchema);
+    expect(completionsAt(plain, plain.text.indexOf("Search(") + 7).map((i) => i.label)).toEqual(["id"]);
   });
 
-  it("completes the inferred record's fields after where and on rows, and record types after search", () => {
-    expect(labels(scheduled(`    let s = search saved "customsearch_open_orders" where me§`))).toEqual(["memo", "total", "entity", "amount", "mainline", "trandate", "subsidiary", "true", "false"]);
-    expect(labels(scheduled(`    let s = search saved SalesOrder "customsearch_x" where me§`))).toEqual(["memo", "total", "entity", "amount", "mainline", "trandate", "subsidiary", "true", "false"]);
-    expect(labels(scheduled(`    let s = search saved "customsearch_customers"\n        where §`))).toContain("email");
-    expect(labels(scheduled(`    for c in search saved "customsearch_customers" {\n        log.debug(c.§)\n    }`))).toContain("email");
+  it("completes the inferred record's fields after where and on rows, and the clause words on the next line", () => {
+    expect(labels(scheduled(`    let s = load Search("customsearch_open_orders") where me§`))).toEqual(["memo", "total", "entity", "amount", "mainline", "trandate", "subsidiary", "true", "false"]);
+    expect(labels(scheduled(`    let s = load Search("customsearch_customers")\n        where §`))).toContain("email");
+    expect(labels(scheduled(`    for c in load Search("customsearch_customers") {\n        log.debug(c.§)\n    }`))).toContain("email");
+    expect(labels(scheduled(`    let s = load Search("customsearch_customers")\n        §`)).slice(0, 6)).toEqual(["where", "select", "order by", "group by", "limit", "first"]);
+    expect(labels(scheduled(`    let s = load Search("customsearch_customers")\n        select §`))).toContain("email");
     expect(labels(scheduled(`    let s = search Cus§`))).toContain("Customer");
   });
 
-  it("hover tells a saved search from an ad-hoc one and says where its type came from", () => {
-    expect(hover(scheduled(`    let s = sea§rch saved "customsearch_customers"`))).toBe(
-      '```mynt\nsearch saved "customsearch_customers": Sequence<Customer>\n```\n\nsaved Customer search · customsearch_customers · result type from the account snapshot · loaded by script id and used as defined (its filters and columns stay) · read-only rows with `id` and the fields the program reads · one search runs per expression',
+  it("hover tells a saved search from an ad-hoc one, says where its type came from, and describes the Search type", () => {
+    expect(hover(scheduled(`    let s = lo§ad Search("customsearch_customers")`))).toBe(
+      '```mynt\nload Search("customsearch_customers"): Sequence<Customer>\n```\n\nsaved Customer search · customsearch_customers · result type from the account snapshot · loaded by script id (`N/search.load`) and used as defined (its filters and columns stay) · read-only rows with `id` and the fields the program reads · one search runs per expression',
     );
-    expect(hover(scheduled(`    let s = sea§rch saved Customer "customsearch_customers" where email !== ""`))).toContain("search saved Customer \"customsearch_customers\" where ...: Sequence<Customer>");
-    expect(hover(scheduled(`    let s = sea§rch saved Customer "customsearch_customers" where email !== ""`))).toContain("result type as written");
-    expect(hover(scheduled(`    let s = sea§rch saved "customsearch_system_notes"`))).toContain("standalone search type systemnote");
+    expect(hover(scheduled(`    let s = lo§ad Search("customsearch_system_notes")`))).toContain("standalone search type systemnote");
+    expect(hover(scheduled(`    let s = load Sea§rch("customsearch_system_notes")`))).toBe(
+      "```mynt\nplatform type Search\n```\n\nA saved search, loaded by its script id and used as a search source: its result type comes from the account snapshot, and it takes the same clauses as `search T`. · `load Search(\"customsearch_active_customers\")` · NetSuite module `N/search`\n\nthis one returns SystemNote rows, per the account snapshot",
+    );
     expect(hover(scheduled(`    let s = sea§rch Customer`))).toContain("search over `N/search`");
-    expect(hover(scheduled(`    let s = search saved Cust§omer "customsearch_customers"`))).toContain("record Customer");
   });
 
-  it("semantic tokens: search stays a builtin operation, saved a keyword, the id a string, an explicit record a struct, and no token on an inferred id", () => {
-    const all = tokens(scheduled(`    let saved = "x"\n    let s = search saved "customsearch_customers"\n        where email !== ""\n    let n = search saved SystemNote "customsearch_system_notes"`));
-    expect(all.filter((t) => /^(search|saved|SystemNote|"customsearch_customers"|"customsearch_system_notes"|where):/.test(t))).toEqual([
+  it("semantic tokens: load stays a builtin operation, Search a builtin type, the id a string", () => {
+    const all = tokens(scheduled(`    let saved = "x"\n    let s = load Search("customsearch_customers")\n        where email !== ""\n    let n = load Search("customsearch_system_notes")`));
+    expect(all.filter((t) => /^(load|saved|Search|"customsearch_customers"|"customsearch_system_notes"|where):/.test(t))).toEqual([
       "saved:variable+declaration",
-      "search:function+defaultLibrary",
-      "saved:keyword",
+      "load:function+defaultLibrary",
+      "Search:type+defaultLibrary",
       '"customsearch_customers":string',
       "where:keyword",
-      "search:function+defaultLibrary",
-      "saved:keyword",
-      "SystemNote:struct",
+      "load:function+defaultLibrary",
+      "Search:type+defaultLibrary",
       '"customsearch_system_notes":string',
     ]);
   });

@@ -238,11 +238,37 @@ export interface SaveStatement {
  * The initializer is mandatory for now; a type annotation slot can be added
  * between the name and `=` later without disturbing this shape.
  */
+/**
+ * `let x = ...`, or `let { email, comments: note } = ...`: exactly one of
+ * `name` and `pattern` is set. A pattern binds each listed field of a
+ * structured value (a projection) to a local, under its own name or an
+ * alias after `:`.
+ */
 export interface LetStatement {
   kind: "LetStatement";
   keywordSpan: Span;
-  name: Identifier;
+  name: Identifier | undefined;
+  pattern: ObjectPattern | undefined;
   initializer: Expression;
+  span: Span;
+}
+
+/** `{ email, comments: note }`: a binding pattern over the fields of a structured value. Shallow: no nesting, no rest. */
+export interface ObjectPattern {
+  kind: "ObjectPattern";
+  fields: PatternField[];
+  openSpan: Span;
+  /** The `}`, or undefined while the pattern is still being typed. */
+  closeSpan: Span | undefined;
+  span: Span;
+}
+
+/** One `source` or `source: local` entry of a pattern. Without an alias, `local` is the same identifier as `source`. */
+export interface PatternField {
+  kind: "PatternField";
+  source: Identifier;
+  local: Identifier;
+  colonSpan: Span | undefined;
   span: Span;
 }
 
@@ -265,12 +291,35 @@ export type Expression =
   | MemberExpression
   | CallExpression
   | ProjectionExpression
+  | LookupExpression
   | QueryExpression
   | BinaryExpression
   | UnaryExpression
   | StringLiteral
   | NumberLiteral
   | BoolLiteral;
+
+/**
+ *   lookup Customer(123)[email, comments]
+ *   lookup Customer(123)
+ *       select email, comments
+ *   lookup customer
+ *       select email
+ *
+ * The explicit spelling of a projection: `lookup` names the operation
+ * (read selected fields of one record), the fields come either in the
+ * receiver's `[...]` or in a `select` clause, which may begin the next
+ * line. The binder normalizes both into the same projection as
+ * `Customer(123)[email, comments]`; `lookup` is contextual, a keyword only
+ * before an expression.
+ */
+export interface LookupExpression {
+  kind: "LookupExpression";
+  keywordSpan: Span;
+  receiver: Expression;
+  select: SelectClause | undefined;
+  span: Span;
+}
 
 /**
  *   Customer(123)[email]
@@ -410,7 +459,11 @@ export interface FirstClause {
 /** The words that begin a search clause. Contextual: identifiers anywhere else. `take` is recognized only to point at `limit`. */
 export const SEARCH_CLAUSE_KEYWORDS: readonly string[] = ["where", "select", "order", "group", "limit", "first", "take"];
 
-/** `saved "customsearch_x"` / `saved Customer "customsearch_x"`: the modifier and the id expression (a string or a name; undefined while being typed). A node, so tooling walks into the id. */
+/**
+ * `load Search("customsearch_x")`: the saved-search source of a search
+ * expression. `keywordSpan` is the `Search` type name, `id` the script id
+ * (undefined while being typed). A node, so tooling walks into the id.
+ */
 export interface SavedSearchClause {
   kind: "SavedSearchClause";
   keywordSpan: Span;
@@ -426,28 +479,27 @@ export const QUERY_OPERATIONS: readonly QueryOperation[] = ["query", "search"];
  *   search Customer
  *       where email != ""
  *
- *   search saved "customsearch_active_customers"
+ *   load Search("customsearch_active_customers")
  *       where email !== ""
- *   search saved SystemNote "customsearch_system_notes"
  *
- * `query`, `search`, `saved`, and `where` are contextual. Inside the
- * condition, bare names are the record's fields. A `where` may begin the
- * next line. The two operations share one syntax and differ only in
- * backend: `query` lowers to `N/query`, `search` to `N/search`.
+ * `query`, `search`, and `where` are contextual. Inside the condition,
+ * bare names are the record's fields. A `where` may begin the next line.
+ * The two operations share one syntax and differ only in backend: `query`
+ * lowers to `N/query`, `search` to `N/search`.
  *
- * `search T` builds a new search, so it names the record type. `search
- * saved id` loads an existing saved search, which already has a type: the
- * record type is omitted and inferred from the account snapshot, and is
- * written only when the snapshot cannot say (an unknown or dynamic id) or
- * to assert it. `saved` is a modifier of `search`, recognized only there.
+ * `search T` builds a new search, so it names the record type. `load
+ * Search(id)` loads an existing saved search, which already has a type:
+ * no record type is written, and the account snapshot says what the
+ * search returns. It is the same expression with `saved` set and
+ * `keywordSpan` on `load`; its clauses apply to the loaded search.
  */
 export interface QueryExpression {
   kind: "QueryExpression";
   operation: QueryOperation;
   keywordSpan: Span;
-  /** The record type written: required for an ad-hoc search, optional for a saved one. */
+  /** The record type written: required for an ad-hoc search, never present for a loaded one. */
   recordType: Identifier | undefined;
-  /** The `saved` clause, for a saved search. */
+  /** The `Search(id)` source, for a loaded saved search. */
   saved: SavedSearchClause | undefined;
   /**
    * The search clauses, in source order. They describe one search, so

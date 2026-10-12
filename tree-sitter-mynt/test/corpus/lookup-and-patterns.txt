@@ -1,0 +1,192 @@
+================================================================================
+lookup in its three spellings, and a file load
+================================================================================
+
+scheduled {
+    let a = Customer(123)[email, comments]
+    let b = lookup Customer(123)[email, comments]
+    let c = lookup Customer(123)
+        select email, comments
+    let d = lookup customer
+        select email
+    let f = load File(456)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    (block
+      (let_statement
+        (identifier)
+        (projection_expression
+          (call_expression
+            (identifier)
+            (arguments
+              (number)))
+          (projection_fields
+            (identifier)
+            (identifier))))
+      (let_statement
+        (identifier)
+        (projection_expression
+          (call_expression
+            (identifier)
+            (type_identifier)
+            (arguments
+              (number)))
+          (projection_fields
+            (identifier)
+            (identifier))))
+      (let_statement
+        (identifier)
+        (query_expression
+          (call_expression
+            (identifier)
+            (type_identifier)
+            (arguments
+              (number)))
+          (select_clause
+            (identifier)
+            (identifier))))
+      (let_statement
+        (identifier)
+        (query_expression
+          (call_expression
+            (identifier)
+            (type_identifier))
+          (select_clause
+            (identifier))))
+      (let_statement
+        (identifier)
+        (call_expression
+          (identifier)
+          (type_identifier)
+          (arguments
+            (number)))))))
+
+================================================================================
+destructuring patterns, with and without aliases
+================================================================================
+
+scheduled {
+    let { email, comments } = info
+    let { email, comments: note } = lookup Customer(123)
+        select email, comments
+    let { a, } = x[a, b]
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    (block
+      (let_statement
+        (object_pattern
+          (pattern_field
+            (identifier))
+          (pattern_field
+            (identifier)))
+        (identifier))
+      (let_statement
+        (object_pattern
+          (pattern_field
+            (identifier))
+          (pattern_field
+            (identifier)
+            (identifier)))
+        (query_expression
+          (call_expression
+            (identifier)
+            (type_identifier)
+            (arguments
+              (number)))
+          (select_clause
+            (identifier)
+            (identifier))))
+      (let_statement
+        (object_pattern
+          (pattern_field
+            (identifier)))
+        (projection_expression
+          (identifier)
+          (projection_fields
+            (identifier)
+            (identifier)))))))
+
+================================================================================
+lookup and let are identifiers elsewhere
+================================================================================
+
+scheduled {
+    let lookup = "x"
+    let select = lookup
+    log.debug(select)
+    log.debug(lookup)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    (block
+      (let_statement
+        (identifier)
+        (string))
+      (let_statement
+        (identifier)
+        (identifier))
+      (expression_statement
+        (call_expression
+          (member_expression
+            (identifier)
+            (identifier))
+          (arguments
+            (identifier))))
+      (expression_statement
+        (call_expression
+          (member_expression
+            (identifier)
+            (identifier))
+          (arguments
+            (identifier)))))))
+
+================================================================================
+cut-off pattern and lookup keep the next statement
+================================================================================
+
+scheduled {
+    let { email,
+    let y = lookup Customer(1)
+        select
+    log.debug("next")
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (scheduled
+    body: (block
+      (let_statement
+        pattern: (object_pattern
+          (pattern_field
+            source: (identifier))
+          (pattern_field
+            source: (identifier))
+          (MISSING "}")))
+      (assignment
+        left: (identifier)
+        right: (query_expression
+          query: (call_expression
+            function: (identifier)
+            type: (type_identifier)
+            arguments: (arguments
+              (number)))
+          clause: (select_clause)))
+      (expression_statement
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          arguments: (arguments
+            (string)))))))

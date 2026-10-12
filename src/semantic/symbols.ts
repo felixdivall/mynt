@@ -19,6 +19,7 @@ import type {
   FunctionReference,
   FieldWrite,
   AliasReference,
+  Destructure,
   ResultFieldRead,
   SelectedAggregate,
   JoinedFieldRead,
@@ -85,6 +86,15 @@ export function symbolAt(doc: SemanticDocument, offset: number): SemanticSymbol 
     case "LocalDeclaration": {
       const { local } = node as unknown as LocalDeclaration;
       return contains(local.declaredAt, offset) ? { kind: "local", local } : undefined;
+    }
+    case "Destructure": {
+      // The local wins where a name is both (`{ email }`); the field is a symbol of its own only when aliased (`{ comments: note }`).
+      const destructure = node as unknown as Destructure;
+      for (const binding of destructure.bindings) {
+        if (contains(binding.local.declaredAt, offset)) return { kind: "local", local: binding.local };
+        if (binding.aliased && contains(binding.fieldSpan, offset)) return { kind: "field", record: destructure.record, field: binding.field };
+      }
+      return undefined;
     }
     case "ForEach":
     case "TryCatch": {
@@ -297,6 +307,12 @@ export function referencesOf(doc: SemanticDocument, symbol: SemanticSymbol): Sym
       case "AliasReference": {
         const reference = node as unknown as AliasReference;
         if (sameSymbol(symbol, { kind: "resultField", aggregate: reference.item })) add(reference.span);
+        break;
+      }
+      case "Destructure": {
+        // The pattern's source names refer to the projection's fields, aliased or not.
+        const destructure = node as unknown as Destructure;
+        for (const binding of destructure.bindings) if (sameSymbol(symbol, { kind: "field", record: destructure.record, field: binding.field })) add(binding.fieldSpan);
         break;
       }
       case "ResultFieldRead": {

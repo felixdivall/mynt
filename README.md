@@ -121,6 +121,44 @@ returns, so there is no `save`, and writing one is an error (MYNT1020). In
 `afterSubmit` the record is already saved, so writes to it are an error
 (MYNT1007); load a fresh copy instead.
 
+### `load`: retrieving objects by type
+
+```mynt
+let customer = load Customer(123)
+let customers = load Search("customsearch_active_customers")
+let file = load File(456)
+```
+
+> Operations are verbs; platform objects are types.
+
+> `load` retrieves an existing object by identity. The target type
+> determines the platform operation.
+
+`load` is one operation in the language, and the type after it decides
+what it retrieves: a record type from the schema is a mutable owned record
+(below); `Search` is a saved search, used as a search source (see [Saved
+searches](#saved-searches)); `File` is a File Cabinet file. Three verbs
+divide the work:
+
+```text
+load    retrieve an existing object by identity
+lookup  retrieve selected fields from one known record
+search  define an ad-hoc search over zero or more records
+```
+
+Source never names SuiteScript's module structure: `record.load`,
+`search.load`, and `file.load` are how the three loads are lowered, not
+something a Mynt author writes. The parser sees one `load`; one registry
+(`src/semantic/loadable.ts`) says which names are loadable and what each
+lowers to; the binder resolves the kind, and the emitter lowers each
+bound form. A new loadable platform object is an entry there plus a
+lowering, never new grammar. `Search` and `File` are platform types, not
+record types: they have no schema fields, cannot be created, copied,
+transformed, referenced, or searched, and saying so is MYNT1018 or
+MYNT1001 with the `load` form shown. `File` is opaque so far: it can be
+loaded and held, and every member is MYNT1011 until its properties are
+modeled. It cannot be a function parameter yet.
+
 ### Owned records: `load` and `create`
 
 ```mynt
@@ -521,7 +559,7 @@ let orders = search SalesOrder
     limit 100
 ```
 
-After its source (`search T` or `search saved ...`), a search takes
+After its source (`search T` or `load Search(...)`), a search takes
 clauses. Three rules make them a description rather than a procedure:
 
 > Search clauses describe one search and may appear in any order.
@@ -713,46 +751,48 @@ against the result fields and lowered to `search.createFilter` with a
 let customers = search Customer
     where email !== ""
 
-// saved, inferred: the saved search already has a type
-let customers = search saved "customsearch_active_customers"
-
-// saved, explicit: when the snapshot cannot say, or to assert it
-let notes = search saved SystemNote "customsearch_system_notes"
+// saved: NetSuite already has the search, and it already has a type
+let customers = load Search("customsearch_active_customers")
+    select entityid, email
+    where comments === ""
+    order by entityid
+    limit 100
 ```
 
-`search saved id` loads an existing saved search by its script id and
-uses it as defined. The record type is not written, because the saved
-search already has one: Mynt does not make the programmer repeat metadata
-that NetSuite owns and Mynt can know safely. `search Customer` names the
-type because Mynt is constructing a new search; `search saved
-"customsearch_x"` does not, because the account snapshot says what the
-search returns (`savedSearches` in the snapshot, by script id). `saved`
-is a modifier of `search`, contextual like `where`, so `let saved = "x"`
-is a local; `query` has no saved form, since N/query has no saved
-searches. The pre-release `using` spelling is gone and reports the new
-form.
+A saved search is a platform object, so it is loaded by its script id
+like any other: `load Search("customsearch_x")`. The expression is a search
+source, not a handle to run later: it takes the same clauses as `search T`
+(`where`, `select`, `order by`, `group by`, aggregates, `limit`, `first`)
+and executes where the value is consumed, like an ad-hoc search. The
+record type is not written, because the saved search already has one:
+Mynt does not make the programmer repeat metadata that NetSuite owns and
+Mynt can know safely. The account snapshot says what each saved search
+returns (`savedSearches`, by script id), and the result is the same typed
+`Sequence<T>` of read-only rows as the ad-hoc form, with `row.id`.
+Downstream nothing can tell the two apart: the same `Query` node with a
+`source` of `saved(id)` instead of `adHoc`, the same column planner,
+predicates, joins, summaries, and reference normalization.
 
-The type is written when the snapshot cannot infer it: an id the snapshot
-does not list (MYNT1054, with the explicit form shown), or an id that is
-a value rather than a literal (`search saved Customer searchId`), since
-Mynt does no constant propagation. Written on a search the snapshot does
-know, it is an assertion the compiler checks: `search saved Customer
-"customsearch_open_orders"` is MYNT1055 when the snapshot says
-`SalesOrder`. Either way the result is the same typed search row sequence
-as the ad-hoc form, and downstream analysis cannot tell inferred from
-explicit: the same `Query` node with a `source` of `saved(id)` instead of
-`adHoc`, the same `Sequence<T>` of read-only rows with `row.id` (from
-`Result.id`, whatever columns the search has), the same column planner,
-predicates, joins, and reference normalization.
+An id the snapshot does not list is MYNT1054, with a did-you-mean hint and
+the snapshot's known ids; so is an id that is a value rather than a
+literal (`load Search(id)`), since nothing in source would state the rows'
+type and Mynt does no constant propagation. There is deliberately no
+explicit-type form yet. The earlier `search saved Customer "..."` existed
+only to fill that gap, and the obvious replacement, `load
+Search<Customer>("...")`, would bring generic syntax into the language for
+one case; a snapshot that lists the search is the supported path. The
+pre-release spellings `search saved ...` and `using` are gone and report
+`load Search(...)` (MYNT0001).
 
 Lowering is `search.load({ id })` with no type: NetSuite needs none for an
 ordinary saved search, and the inferred type is Mynt's typing, not the
 backend's business. A standalone search type (`searchType` on the
 snapshot entry, `systemnote` for instance) is the one case `search.load`
-must be told the type, and then it is passed as the snapshot spells it.
-Whatever the source of the type, the loaded search's `searchType` is still
-checked at runtime against the record's search type and family, so a
-snapshot that is wrong fails loudly rather than mistyping rows.
+must be told the type, and then it is passed as the snapshot spells it,
+without the author repeating it. The loaded search's `searchType` is
+still checked at runtime against the record's search type and family, so
+a snapshot that disagrees with the account fails loudly rather than
+mistyping rows.
 
 The emitted `mynt$savedSearch` helper calls `search.load`, keeps the
 search's filters and columns, and makes only in-memory changes: a planned
@@ -779,9 +819,9 @@ searches, so today a snapshot states them by hand, and a later discovery
 step (a deployed script enumerating saved searches, or another account
 enrichment) can write the same shape. The snapshot stays version 1: the
 field is optional and additive, and a snapshot without it is a valid
-snapshot that knows no saved searches. In the editor, `search saved "`
-completes the snapshot's script ids, filtered to one record type when it
-is written.
+snapshot that knows no saved searches. In the editor, `load Search(`
+and its string complete the snapshot's script ids, each with its record
+type.
 
 Not verified live: that `filterExpression` on a loaded search returns and
 accepts the nested array form, that appending columns in memory is
@@ -1000,6 +1040,72 @@ hand:
 Using a lookup on a reference infers `N/search`; a script that only looks
 fields up depends on `N/search` and not on `N/record`. The flagship
 example is `examples/lookup-customer.mn`.
+
+### `lookup`
+
+```mynt
+let info = Customer(123)[email, comments]
+
+let info = lookup Customer(123)[email, comments]
+
+let info = lookup Customer(123)
+    select email, comments
+```
+
+These are one operation. `lookup` names it, making the read explicit
+where that helps, and `select` uses the query vocabulary; neither changes
+the meaning, the result type, or the lowering, and no form is preferred
+over another. The binder normalizes all three into the same projection,
+so one field is still the field's value (`lookup Customer(123) select
+email` is a `string`) and several are a `Customer[email, comments]`
+projection. What runs follows the receiver exactly as in the table above:
+one `lookupFields` for a reference, local reads for a loaded record or a
+row. `lookup` means "read selected fields", not "always call NetSuite", so
+`lookup customer select email` on a loaded record never adds a second
+fetch, and on a row it never adds a fetch per row.
+
+A lookup has one known identity, so `select` is its only clause, and it
+takes plain fields of that one record: no aggregates (MYNT1062), result
+names (MYNT1063), or joins (MYNT1053, pointing at looking up the
+referenced record itself). The fields are given once, in `[...]` or in
+`select` (MYNT1064 for both). A bare `lookup Customer(123)` is MYNT1064:
+`lookup` retrieves selected fields; `load Customer(...)` retrieves the
+whole record. `lookup` is contextual, a keyword only before an
+expression, so `let lookup = "x"` is a local.
+
+### Destructuring
+
+```mynt
+let { email, comments: note } = lookup Customer(123)
+    select email, comments
+```
+
+> `select` defines the returned shape; destructuring defines how that
+> shape is bound locally.
+
+`let { a, b: c } = value` binds fields of a structured value as ordinary
+immutable locals: `a` under its own name, `b` as `c`. The value is
+evaluated once; the lowering is JavaScript's own `const { a, b: c } =
+...`. It is a general binding form, not part of `lookup`: any projection
+destructures, from any of the three spellings or from a local holding
+one. Each entry must name a field of that projection, not merely of the
+record (MYNT1065 says which fields are available, and when the field
+exists but was not selected); a field is bound once and a name declared
+once (MYNT1065, MYNT1017). Patterns are shallow: no nesting, no rest.
+
+Only a projection destructures. A one-field lookup is the field's value,
+not a projection, so `let { email } = lookup Customer(123) select email`
+is MYNT1065 pointing at `let email = ...`; the single-field semantics are
+not bent to fit the pattern. Records, references, and summary rows are
+refused with the form that applies to each. A destructured reference
+field stays a `Ref<T>` with the identity and display text the lookup
+gave it.
+
+The locals are real local symbols: hover, references, rename, and
+semantic tokens treat them like any `let`. With an alias the source name
+is the schema field and the local is separate, so renaming `note` never
+touches `comments`, and Find References on `comments` reaches the
+projection that selected it.
 
 ### Select fields, `.id`, and `.text`
 
@@ -1272,8 +1378,11 @@ approximated.
 ## Locals and record types
 
 `let name = expression` declares an immutable local whose type is inferred
-from the initializer. A local may not be redeclared in the same scope, and an
-entry point parameter counts as declared. There is no reassignment yet.
+from the initializer, and `let { a, b: c } = projection` declares one per
+field ([Destructuring](#destructuring)). A local may not be redeclared in
+the same scope, and an entry point parameter counts as declared. There is
+no reassignment yet, and no `const` or `var`: `let` is the one
+declaration keyword.
 
 `Customer` and `SalesOrder` are record types: compile-time symbols from the
 schema, not runtime values. They appear in three places: the entry point
@@ -1305,7 +1414,9 @@ Statement   := LetStatement | SaveStatement | DeleteStatement | RemoveStatement 
 TryStatement:= "try" Block ("catch" Identifier? Block)? ("finally" Block)? Terminator?
 ReturnStatement:= "return" Expression? Terminator?
 ForStatement:= "for" Identifier "in" Expression Block Terminator?
-LetStatement:= "let" Identifier "=" Expression (Terminator? "or" ("return" | Block))? Terminator?
+LetStatement:= "let" (Identifier | ObjectPattern) "=" Expression (Terminator? "or" ("return" | Block))? Terminator?
+ObjectPattern := "{" PatternField ("," PatternField)* ","? "}"
+PatternField:= Identifier (":" Identifier)?
 SaveStatement:= "save" Expression Terminator?
 DeleteStatement:= "delete" Expression Terminator?
 RemoveStatement:= "remove" Expression Terminator?
@@ -1318,8 +1429,9 @@ Postfix     := Primary ("." Identifier | TypeArgument ("(" Arguments ")")? ("to"
 Projection  := "[" Identifier ("," Identifier)* "]"
 TypeArgument:= Identifier
 Arguments   := (Expression ("," Expression)*)?
-Primary     := Identifier | String | Number | "true" | "false" | "(" Expression ")" | Query
-Query       := ("query" | "search") (Identifier | "saved" Identifier? (String | Identifier)) (Terminator? Clause)*
+Primary     := Identifier | String | Number | "true" | "false" | "(" Expression ")" | Query | Lookup
+Lookup      := "lookup" Postfix (Terminator? "select" FieldPath ("," FieldPath)*)?
+Query       := ("query" | "search") Identifier (Terminator? Clause)* | "load" "Search" "(" Expression ")" (Terminator? Clause)*
 Clause      := "where" Expression | "select" SelectItem ("," SelectItem)* | "order" "by" SortKey ("," SortKey)*
              | "group" "by" FieldPath ("," FieldPath)* | "limit" Primary | "first"
 SelectItem  := FieldPath | Identifier "=" ("sum" | "count" | "min" | "max" | "avg") "(" FieldPath? ")"
@@ -1576,7 +1688,10 @@ names:
 | `let` locals, loop variables, caught errors | `variable` | `declaration` at the declaration |
 | body field, line field, query field, projected field, grouped field, sublist, `id`, `text`, `Error.name`, `Error.message` | `property` | `readonly` when the schema says so, `modification` on an assignment target |
 | event filters (`create \| edit`) | `enumMember` | |
-| `beforeSubmit`, `afterSubmit`, `scheduled`, `fn`, `let`, `if`, `else`, `for`, `in`, `saved`, `where`, `select`, `order`, `group`, `by`, `asc`, `desc`, `limit`, `first`, `or`, `try`, `catch`, `finally`, `save`, `delete`, `add`, `remove`, `to`, `return` | `keyword` | |
+| `beforeSubmit`, `afterSubmit`, `scheduled`, `fn`, `let`, `if`, `else`, `for`, `in`, `where`, `select`, `order`, `group`, `by`, `asc`, `desc`, `limit`, `first`, `or`, `try`, `catch`, `finally`, `save`, `delete`, `add`, `remove`, `to`, `return` | `keyword` | |
+| `load`, `lookup`, `query`, `search` | `function` | `defaultLibrary` |
+| `Search`, `File` (platform types) | `type` | `defaultLibrary` |
+| locals bound by `let { ... }`; an aliased pattern source | `variable`; `property` | `declaration` at the binding |
 | `sum`, `count`, `min`, `max`, `avg` in a `select` | `function` + `defaultLibrary` | |
 | an aggregate's result name, in `select`, `order by`, and on a row | `property` | `declaration` in `select`, `readonly` |
 | string and number literals | `string`, `number` | |
@@ -1692,8 +1807,9 @@ theme can style it:
 
 | Source                                     | Semantic token                        | Grammar capture (fallback)  |
 | ------------------------------------------ | ------------------------------------- | --------------------------- |
-| `fn` `let` `return` `if` `for` `in` `saved` `where` `select` `order` `group` `by` `asc` `desc` `limit` `first` `or` `try` `catch` `finally` `to` `save` ... | `keyword`         | `@keyword`                  |
-| `query` `search` `load` `create` `copy` `transform`, and `sum` `count` `min` `max` `avg` in a `select` | `function` + `defaultLibrary` | `@function.builtin`     |
+| `fn` `let` `return` `if` `for` `in` `where` `select` `order` `group` `by` `asc` `desc` `limit` `first` `or` `try` `catch` `finally` `to` `save` ... | `keyword`         | `@keyword`                  |
+| `query` `search` `load` `lookup` `create` `copy` `transform`, and `sum` `count` `min` `max` `avg` in a `select` | `function` + `defaultLibrary` | `@function.builtin`     |
+| `Search` `File` after `load`               | `type` + `defaultLibrary`             | `@type.builtin`             |
 | `log` / `log.debug`                        | `namespace` / `method` + `defaultLibrary` | `@variable` / `@function.method` |
 | `string` `number` `boolean`                | `type` + `defaultLibrary`             | `@type.builtin`             |
 | `Customer` `SalesOrder`, also in `Customer(123)` | `struct`                        | `@type`                     |
@@ -1815,8 +1931,8 @@ Search predicates are translated in `src/semantic/search.ts`.
 | MYNT1051 | `.text` on a reference that carries no display text        |
 | MYNT1052 | Saved search named by something other than a string         |
 | MYNT1053 | Relationship that cannot be joined: multiselect, second hop, or the `query` backend |
-| MYNT1054 | Saved search whose result type the snapshot cannot infer (unknown or dynamic id) |
-| MYNT1055 | Explicit saved-search type that contradicts the account snapshot |
+| MYNT1054 | Saved search whose result type the snapshot cannot give: an id it does not list, or an id that is a value |
+| MYNT1055 | Retired: explicit saved-search types are no longer written      |
 | MYNT1056 | Search clause (`where`, `select`, `order by`, `group by`, `limit`, `first`) written twice |
 | MYNT1057 | Search clause that cannot be honored: a non-field in `select`/`order by`/`group by`, an unsortable or ungroupable key, a bad `limit` count, `first` with `limit`, or a summary sort key that is not a result field |
 | MYNT1058 | Member read from an optional row (`first`) that was neither resolved with `or` nor tested with `if` |
@@ -1825,4 +1941,6 @@ Search predicates are translated in `src/semantic/search.ts`.
 | MYNT1061 | Selected field of a summary search that is neither grouped nor aggregated |
 | MYNT1062 | Aggregate problem: unnamed, unknown, or over a field of the wrong type |
 | MYNT1063 | Result name problem: repeated, over a selected field, or used as a source name in `where`, `group by`, or an aggregate |
+| MYNT1064 | `lookup` without fields, or with fields both in `[...]` and in `select` |
+| MYNT1065 | Destructuring that does not fit the value: not a projection, a field it lacks, or a field bound twice |
 | MYNT2001 | Warning: loaded record modified on a path with no later `save` |

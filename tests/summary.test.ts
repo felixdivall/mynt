@@ -310,7 +310,7 @@ describe("summary rows", () => {
 
 describe("saved searches", () => {
   it("a Mynt summary over a saved search keeps its filters and type and replaces its columns; its own summary columns are refused at runtime", () => {
-    const over = scheduled(`    for row in search saved "customsearch_open_orders"\n        group by entity\n        select entity, total = sum(amount)\n        order by total desc {\n        log.debug(row.entity.text)\n    }`);
+    const over = scheduled(`    for row in load Search("customsearch_open_orders")\n        group by entity\n        select entity, total = sum(amount)\n        order by total desc {\n        log.debug(row.entity.text)\n    }`);
     expect(call(over)).toBe(
       'mynt$savedSearch([search.Type.SALES_ORDER, "transaction"], "customsearch_open_orders", [{ name: "amount", summary: "SUM", alias: "total", sort: "DESC" }, { name: "entity", summary: "GROUP" }], ["entity"])',
     );
@@ -319,7 +319,7 @@ describe("saved searches", () => {
     expect(netsuite.search.runs[0]!.filters).toEqual([["memo", "isnot", "fourth"]]);
     expect(netsuite.log.calls.map((c) => c.details)).toEqual(["Acme", "Gamma", "Beta"]);
     expect(netsuite.search.savedDefinition("customsearch_open_orders")!.columns).toEqual([{ name: "memo" }, { name: "total" }]);
-    expect(() => logged(scheduled(`    for row in search saved SalesOrder "customsearch_totals" group by entity select entity, total = sum(amount) {\n        log.debug(row.entity.text)\n    }`))).toThrow(
+    expect(() => logged(scheduled(`    for row in load Search("customsearch_totals") group by entity select entity, total = sum(amount) {\n        log.debug(row.entity.text)\n    }`))).toThrow(
       "Mynt: saved search customsearch_totals already has summary columns; a Mynt 'group by' or aggregate cannot be combined with its own summary",
     );
   });

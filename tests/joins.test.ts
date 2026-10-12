@@ -192,7 +192,7 @@ describe("joins on saved searches and custom records", () => {
       columns: [{ name: "memo" }, { name: "email", join: "entity" }, { name: "email" }, { name: "email", join: "entity", summary: "COUNT" }],
       filters: [["memo", "isnot", "orphan"]],
     });
-    const js = output(scheduled(`    for o in search saved "customsearch_open_orders" where entity.email != "" {\n        log.debug(o.entity.email)\n        log.debug(o.entity.subsidiary.text)\n    }`));
+    const js = output(scheduled(`    for o in load Search("customsearch_open_orders") where entity.email != "" {\n        log.debug(o.entity.email)\n        log.debug(o.entity.subsidiary.text)\n    }`));
     expect(js).toContain(
       'mynt$savedSearch([search.Type.SALES_ORDER, "transaction"], "customsearch_open_orders", [{ name: "email", join: "entity", field: "entity" }, { name: "subsidiary", join: "entity", field: "entity" }], ["entity.subsidiary"], [["entity.email", search.Operator.ISNOTEMPTY, ""]])',
     );

@@ -266,12 +266,15 @@ export interface OptionalType {
 }
 
 /**
+ * `File`: a File Cabinet file from `load File(id)`. Opaque so far: it can be
+ * held and passed along; its properties and contents are not modeled yet.
+ *
  * `Error`: the value a `catch` binds, a thrown JavaScript or NetSuite
  * error. Opaque except for `name` and `message`, which every runtime error
  * carries, and loggable as it is. Not a record, not comparable, not a
  * field type: it exists only inside `catch`.
  */
-export type MyntType = FieldType | "Bool" | "Void" | "Error" | RecordType | SequenceType | SublistType | LineType | ReferenceType | ProjectionType | OptionalType | SummaryType;
+export type MyntType = FieldType | "Bool" | "Void" | "Error" | "File" | RecordType | SequenceType | SublistType | LineType | ReferenceType | ProjectionType | OptionalType | SummaryType;
 
 /** The members an Error exposes, each a string. */
 export const ERROR_MEMBERS: readonly string[] = ["name", "message"];

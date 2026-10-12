@@ -112,6 +112,7 @@ export interface BoundScheduledEntryPoint {
 export type BoundStatement =
   | TryCatch
   | LocalDeclaration
+  | Destructure
   | FieldWrite
   | SaveRecord
   | DeleteRecord
@@ -267,6 +268,28 @@ export interface LocalDeclaration {
   span: Span;
 }
 
+/**
+ * `let { email, comments: note } = value`: one evaluation of a structured
+ * value (a projection), then one ordinary local per listed field. The
+ * source field keeps its identity (`field`, `fieldSpan`) beside the local,
+ * so a rename of the local never touches the schema name.
+ */
+export interface Destructure {
+  kind: "Destructure";
+  source: BoundExpression;
+  record: RecordSchema;
+  bindings: DestructureBinding[];
+  span: Span;
+}
+
+export interface DestructureBinding {
+  field: FieldSchema;
+  fieldSpan: Span;
+  local: LocalSymbol;
+  /** Whether the local was named with `: name`; without it, `fieldSpan` is the local's declaration too. */
+  aliased: boolean;
+}
+
 export interface FieldWrite {
   kind: "FieldWrite";
   /** A record-typed local (entry point parameter or owned record), or a line local whose parent owns the write. */
@@ -302,6 +325,7 @@ export type BoundExpression =
   | OptionalPresence
   | ErrorPropertyRead
   | ResultFieldRead
+  | FileLoad
   | SelectedAggregate
   | AliasReference
   | BoundStringLiteral
@@ -444,6 +468,20 @@ export interface Lookup {
   source: LookupSource;
   /** One field: that field's value type. Several: the projection. */
   type: MyntType;
+  /** The `lookup` word, when the operation was spelled out; the meaning is the same without it. */
+  keywordSpan: Span | undefined;
+  span: Span;
+}
+
+/** `load File(456)`: a File Cabinet file by internal id, an opaque File value. */
+export interface FileLoad {
+  kind: "FileLoad";
+  id: BoundExpression;
+  /** The `load` word. */
+  operationSpan: Span;
+  /** The `File` type name. */
+  typeSpan: Span;
+  type: "File";
   span: Span;
 }
 
@@ -534,10 +572,12 @@ export type SearchSource =
   | {
       kind: "saved";
       id: BoundExpression;
-      /** The `saved ... id` clause. Not named `span`: the source is a property of the Query, not a node of its own. */
+      /** The `Search(id)` source. Not named `span`: the source is a property of the Query, not a node of its own. */
       clause: Span;
-      /** Where the result record type came from: written in source, or the account snapshot's saved-search metadata. */
-      recordFrom: "explicit" | "snapshot";
+      /** The `Search` type name. */
+      typeSpan: Span;
+      /** Where the result record type came from: the account snapshot's saved-search metadata (the only source now). */
+      recordFrom: "snapshot";
       /** The N/search type `search.load` must be passed, for a standalone search type the snapshot marks; undefined otherwise. */
       loadType: string | undefined;
     };
@@ -554,6 +594,8 @@ export type SearchSource =
 export interface Query {
   kind: "Query";
   operation: QueryOperation;
+  /** The operation word: `query`, `search`, or `load` for a saved search. */
+  operationSpan: Span;
   source: SearchSource;
   recordType: RecordTypeReference;
   condition: BoundExpression | undefined;

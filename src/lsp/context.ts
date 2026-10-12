@@ -14,7 +14,10 @@ import type { NameResolution } from "../semantic/binder.js";
 export type CompletionContext =
   | { kind: "topLevel" }
   | { kind: "eventName" }
-  | { kind: "recordType" }
+  /** A type position: a record type, and after `load` also the loadable platform types (`Search`, `File`). */
+  | { kind: "recordType"; loadable?: boolean }
+  /** Inside `let { ... }`: the fields of the value being destructured, minus those listed. `patternOffset` is the `{`. */
+  | { kind: "patternField"; patternOffset: number; listed: string[]; source: string[] | undefined }
   /** A function parameter's type: string, number, boolean, or a record type. */
   | { kind: "parameterType" }
   | { kind: "returnType" }
@@ -30,7 +33,7 @@ export type CompletionContext =
   | { kind: "searchClause"; used: string[] }
   /** Inside `select ...`: a field of the searched record (by record name, or saved-search id), minus those already listed. */
   /** A `select` item position: a field, or an aggregate (`total = sum(`). `summary` says the search is already a summary (a `group by`, or an aggregate listed). */
-  | { kind: "selectField"; record: string | undefined; savedSearch: string | undefined; listed: string[]; summary: boolean }
+  | { kind: "selectField"; record: string | undefined; savedSearch: string | undefined; listed: string[]; summary: boolean; lookup?: boolean }
   /** After `name = `: an aggregate function. */
   | { kind: "aggregate"; alias: string }
   /** Inside `sum(`: the fields the aggregate accepts. */
@@ -90,6 +93,18 @@ function isQueryOperation(token: Token | undefined): boolean {
   return token?.kind === "Identifier" && (QUERY_OPERATIONS as readonly string[]).includes(token.text);
 }
 
+/** Whether the token at `i` is the `lookup` operation: the word before an expression. */
+function isLookupOperation(tokens: Token[], i: number): boolean {
+  const t = tokens[i];
+  return t?.kind === "Identifier" && t.text === "lookup" && tokens[i + 1]?.kind === "Identifier";
+}
+
+/** Whether the token at `i` begins `load Search(`, a saved search used as a search source. */
+function isSavedSearchLoad(tokens: Token[], i: number): boolean {
+  const t = tokens[i];
+  return t?.kind === "Identifier" && t.text === "load" && tokens[i + 1]?.kind === "Identifier" && tokens[i + 1]!.text === "Search" && tokens[i + 2]?.kind === "LParen";
+}
+
 /**
  * If the cursor is inside an open `[...]`, the projection being typed: the
  * innermost unmatched `[` on this statement, the identifier chain before
@@ -135,7 +150,7 @@ function searchInProgress(before: Token[]): { start: number; clauses: { word: st
     if (t.kind === "LBrace" || t.kind === "RBrace") break;
     const continues = before[i + 1]?.kind === "Identifier" && CLAUSE_WORDS.includes(before[i + 1]!.text);
     if (t.kind === "Terminator" && !continues) break;
-    if (isQueryOperation(t)) start = i;
+    if (isQueryOperation(t) || isLookupOperation(before, i) || isSavedSearchLoad(before, i)) start = i;
   }
   if (start < 0) return undefined;
   // A clause begins at a line start, or right after the source (`search T`, `search saved [T] id`) on the same line.
@@ -143,21 +158,42 @@ function searchInProgress(before: Token[]): { start: number; clauses: { word: st
   for (let i = start + 1; i < before.length; i++) {
     const t = before[i]!;
     if (t.kind !== "Identifier" || !CLAUSE_WORDS.includes(t.text)) continue;
-    const afterSource = clauses.length === 0 && i <= start + 4;
+    const afterSource = clauses.length === 0 && i <= start + 5;
     if (before[i - 1]?.kind === "Terminator" || afterSource) clauses.push({ word: t.text, at: i });
   }
   return { start, clauses };
 }
 
-/** `search saved` or `search saved T` right before the cursor: the position of a saved search's id. */
+/** `load Search(` right before the cursor: the position of a saved search's id. */
 function savedSearchIdContext(before: Token[]): CompletionContext | undefined {
   const n = before.length;
-  const last = before[n - 1];
-  if (last?.kind === "Identifier" && last.text === "saved" && isQueryOperation(before[n - 2])) return { kind: "savedSearchId", record: undefined };
-  if (last?.kind === "Identifier" && before[n - 2]?.kind === "Identifier" && before[n - 2]!.text === "saved" && isQueryOperation(before[n - 3])) {
-    return { kind: "savedSearchId", record: last.text };
-  }
+  const [load, type, open] = [before[n - 3], before[n - 2], before[n - 1]];
+  if (open?.kind === "LParen" && type?.kind === "Identifier" && type.text === "Search" && load?.kind === "Identifier" && load.text === "load") return { kind: "savedSearchId", record: undefined };
   return undefined;
+}
+
+/**
+ * Inside `let { ... }` before its `=`: the pattern being typed. The value
+ * comes after the cursor, so the caller resolves what it is; this reports
+ * the `{` and the fields listed so far.
+ */
+function patternContext(before: Token[]): CompletionContext | undefined {
+  let open = -1;
+  for (let i = before.length - 1; i >= 0; i--) {
+    const t = before[i]!;
+    if (t.kind === "RBrace" || t.kind === "Terminator" || t.kind === "Equals") return undefined;
+    if (t.kind === "LBrace") {
+      open = i;
+      break;
+    }
+    if (t.kind !== "Identifier" && t.kind !== "Comma" && t.kind !== "Colon") return undefined;
+  }
+  if (open <= 0) return undefined;
+  const let_ = before[open - 1];
+  if (let_?.kind !== "Identifier" || let_.text !== "let") return undefined;
+  const inside = before.slice(open + 1);
+  const listed = inside.filter((t, i) => t.kind === "Identifier" && inside[i - 1]?.kind !== "Colon").map((t) => t.text);
+  return { kind: "patternField", patternOffset: before[open]!.span.start.offset, listed, source: undefined };
 }
 
 /**
@@ -173,20 +209,11 @@ function queryRecordInScope(before: Token[]): { record: string | undefined; save
   let inWhere = false;
   for (let i = 0; i < before.length; i++) {
     const t = before[i]!;
-    if (isQueryOperation(t) && before[i + 1]?.kind === "Identifier" && before[i + 1]!.text === "saved") {
-      const a = before[i + 2];
-      const b = before[i + 3];
+    if (isSavedSearchLoad(before, i)) {
+      // `load Search("customsearch_x")`: known by its id, for the semantic document to resolve.
       record = undefined;
-      savedSearch = undefined;
-      if (a?.kind === "Identifier" && (b?.kind === "String" || b?.kind === "Identifier")) {
-        record = a.text;
-        i += 3;
-      } else if (a?.kind === "String") {
-        savedSearch = a.value;
-        i += 2;
-      } else {
-        i += 1;
-      }
+      savedSearch = before[i + 3]?.kind === "String" ? before[i + 3]!.value : undefined;
+      i += before[i + 4]?.kind === "RParen" ? 4 : 3;
       inWhere = false;
       continue;
     }
@@ -244,11 +271,19 @@ function searchClauseContext(before: Token[]): CompletionContext | undefined {
   if (!search) return undefined;
   const current = search.clauses[search.clauses.length - 1];
   if (!current || (current.word !== "select" && current.word !== "order" && current.word !== "group")) return undefined;
+  const after = before.slice(current.at + 1);
+  const last = after[after.length - 1];
+  if (isLookupOperation(before, search.start)) {
+    // `lookup X select |`: the fields of the one record, by its type name or through the receiver local's type.
+    if (current.word !== "select" || !(after.length === 0 || last?.kind === "Comma")) return undefined;
+    const receiver = before[search.start + 1]!;
+    const record = before[search.start + 2]?.kind === "LParen" ? receiver.text : undefined;
+    const listed = after.filter((t) => t.kind === "Identifier").map((t) => t.text);
+    return { kind: "selectField", record, savedSearch: undefined, listed, summary: false, lookup: true, ...(record ? {} : { receiverLocal: receiver.text }) } as CompletionContext;
+  }
   const scope = queryRecordInScope(before.slice(0, current.at + 1).concat([{ kind: "Identifier", text: "where", span: before[current.at]!.span }]));
   const record = scope?.record;
   const savedSearch = scope?.savedSearch;
-  const after = before.slice(current.at + 1);
-  const last = after[after.length - 1];
   const summary = summaryShape(before, search);
   if (current.word === "select") {
     if (after.length === 0 || last?.kind === "Comma") {
@@ -334,6 +369,8 @@ function classify(before: Token[], resolve: (name: string) => NameResolution | u
 
   const projection = depth > 0 ? projectionInProgress(before) : undefined;
   if (projection) return projection;
+  const pattern = depth > 0 ? patternContext(before) : undefined;
+  if (pattern) return pattern;
 
   if (depth <= 0) {
     if (!last || last.kind === "Terminator" || last.kind === "RBrace") return { kind: "topLevel" };
@@ -389,7 +426,7 @@ function classify(before: Token[], resolve: (name: string) => NameResolution | u
   if (last.kind === "Identifier") {
     if (STATEMENT_KEYWORDS.has(last.text) && !["if", "save", "delete", "remove", "add", "return"].includes(last.text)) return { kind: "none" };
     const resolved = resolve(last.text);
-    if (resolved?.kind === "builtin" && resolved.builtin.kind === "recordOperation") return { kind: "recordType" };
+    if (resolved?.kind === "builtin" && resolved.builtin.kind === "recordOperation") return { kind: "recordType", loadable: resolved.builtin.id === "load" };
     if (last.text === "to" && before[before.length - 2]?.kind === "RParen") return { kind: "recordType" };
     return { kind: "expression" };
   }

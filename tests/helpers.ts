@@ -94,6 +94,7 @@ export const referenceFixtureSchema: SchemaDocument = {
     customsearch_active_customers: { record: "Customer" },
     customsearch_open_orders: { record: "SalesOrder" },
     customsearch_system_notes: { record: "SystemNote", searchType: "systemnote" },
+    customsearch_totals: { record: "SalesOrder" },
   },
   records: {
     ...fixtureSchema.records,

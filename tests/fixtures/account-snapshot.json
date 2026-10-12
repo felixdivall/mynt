@@ -221,6 +221,11 @@
     },
     "salesorder": {
       "fields": {
+        "amount": {
+          "label": "Amount",
+          "type": "Number",
+          "writable": false
+        },
         "entity": {
           "label": "Customer",
           "refTarget": "Customer",
@@ -228,15 +233,32 @@
           "type": "Ref",
           "writable": true
         },
+        "mainline": {
+          "label": "Main Line",
+          "type": "Bool",
+          "writable": false
+        },
         "memo": {
           "label": "Memo",
           "type": "Text",
+          "writable": true
+        },
+        "subsidiary": {
+          "label": "Subsidiary",
+          "refTarget": "Subsidiary",
+          "selection": "single",
+          "type": "Ref",
           "writable": true
         },
         "total": {
           "label": "Total",
           "type": "Number",
           "writable": false
+        },
+        "trandate": {
+          "label": "Date",
+          "type": "Date",
+          "writable": true
         }
       },
       "name": "SalesOrder",
@@ -320,6 +342,9 @@
     "customsearch_system_notes": {
       "record": "SystemNote",
       "searchType": "systemnote"
+    },
+    "customsearch_totals": {
+      "record": "SalesOrder"
     }
   },
   "source": {

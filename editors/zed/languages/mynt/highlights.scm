@@ -19,7 +19,6 @@
   "else"
   "for"
   "in"
-  "saved"
   "where"
   "select"
   "order"
@@ -65,6 +64,9 @@
 (function_declaration name: (identifier) @function)
 (parameter name: (identifier) @variable.parameter)
 (let_statement name: (identifier) @variable)
+; A pattern binds locals; a source named apart from its local (`comments: note`) is the field, the local the variable.
+(pattern_field source: (identifier) @variable)
+(pattern_field source: (identifier) @property local: (identifier) @variable)
 (try_statement binding: (identifier) @variable)
 (for_statement variable: (identifier) @variable)
 (call_expression function: (identifier) @function)
@@ -75,9 +77,10 @@
 ; as a builtin function so the fallback agrees with the semantic token the
 ; server sends (`function` + `defaultLibrary`); `where` and `to` stay keywords.
 ((call_expression function: (identifier) @function.builtin type: (type_identifier))
-  (#match? @function.builtin "^(query|search|load|create|copy|transform)$"))
-((saved_search function: (identifier) @function.builtin)
-  (#match? @function.builtin "^search$"))
+  (#match? @function.builtin "^(query|search|load|create|copy|transform|lookup)$"))
+; The loadable platform types read as builtin types, like `string`.
+((call_expression type: (type_identifier) @type.builtin)
+  (#match? @type.builtin "^(Search|File)$"))
 
 ; `Customer(123)` is a record reference, not a call: the callee is a record
 ; type. The grammar cannot consult the schema, so the fallback uses Mynt's

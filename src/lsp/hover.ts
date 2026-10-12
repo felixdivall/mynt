@@ -13,7 +13,9 @@ import type {
   BoundForEach,
   BoundFunction,
   BuiltinReference,
+  Destructure,
   ErrorPropertyRead,
+  FileLoad,
   ResultFieldRead,
   SelectedAggregate,
   FieldRead,
@@ -37,6 +39,7 @@ import type {
   TryCatch,
 } from "../semantic/bound.js";
 import { builtinSignature, type Builtin } from "../semantic/builtins.js";
+import { platformType } from "../semantic/loadable.js";
 import { boundPathAt, contains, syntaxPathAt, type SemanticDocument, type TreeNode } from "../semantic/query.js";
 import { allBoundNodes } from "../semantic/symbols.js";
 import { isLineType, isPrimitiveTypeName, isProjectionType, isRecordType, isReferenceType, isSummaryType, sublistName, typeName, type AggregateKind, type ResultField } from "../semantic/types.js";
@@ -124,10 +127,35 @@ function boundHover(doc: SemanticDocument, node: TreeNode, parent: TreeNode | un
       const lookup = parent as unknown as Lookup | undefined;
       return { contents: fieldHover(lookup?.kind === "Lookup" ? lookup.record.name : undefined, projected.field), span: projected.span };
     }
+    case "Lookup": {
+      const lookup = node as unknown as Lookup;
+      if (!lookup.keywordSpan || !contains(lookup.keywordSpan, offset)) return undefined;
+      const how = { lookupFields: "one `N/search.lookupFields` call for exactly these fields", record: "read locally from the loaded record (`getValue`), no search", row: "read locally from the row's planned columns, no search" }[lookup.source];
+      return {
+        contents: code(`lookup ${lookup.record.name}: ${typeName(lookup.type)}`) + `\n\nreads the selected fields of one ${lookup.record.name} · ${how} · the same operation as \`${lookup.record.name}(...)[${lookup.fields.map((f) => f.field.id).join(", ")}]\``,
+        span: lookup.keywordSpan,
+      };
+    }
+    case "FileLoad": {
+      const load = node as unknown as FileLoad;
+      if (!contains(load.typeSpan, offset)) return undefined;
+      return { contents: platformTypeHover("File"), span: load.typeSpan };
+    }
+    case "Destructure": {
+      const destructure = node as unknown as Destructure;
+      for (const binding of destructure.bindings) {
+        if (contains(binding.local.declaredAt, offset)) return { contents: localHover(binding.local) + ` · bound from the projection's \`${binding.field.id}\``, span: binding.local.declaredAt };
+        if (binding.aliased && contains(binding.fieldSpan, offset)) return { contents: fieldHover(destructure.record.name, binding.field), span: binding.fieldSpan };
+      }
+      return undefined;
+    }
     case "Query": {
-      // The `query`/`search` word has no bound node of its own; it is the start of the expression.
+      // The operation word has no bound node of its own; it is the start of the expression. `Search` is the platform type.
       const query = node as unknown as Query;
-      const keyword = { start: query.span.start, end: { ...query.span.start, offset: query.span.start.offset + query.operation.length, column: query.span.start.column + query.operation.length } };
+      const keyword = query.operationSpan;
+      if (query.source.kind === "saved" && contains(query.source.typeSpan, offset)) {
+        return { contents: platformTypeHover("Search") + `\n\nthis one returns ${query.recordType.record.name} rows, per the account snapshot`, span: query.source.typeSpan };
+      }
       if (!contains(keyword, offset)) return undefined;
       const record = query.recordType.record.name;
       const module = query.operation === "query" ? "N/query" : "N/search";
@@ -145,10 +173,10 @@ function boundHover(doc: SemanticDocument, node: TreeNode, parent: TreeNode | un
       ].filter(Boolean);
       return {
         contents:
-          code(`${query.operation} ${saved ? `saved ${saved.recordFrom === "explicit" ? `${record} ` : ""}${saved.id.kind === "StringLiteral" ? JSON.stringify(savedId) : "..."}` : record}${query.condition ? " where ..." : ""}${query.first ? " first" : ""}: ${typeName(query.type)}`) +
+          code(`${saved ? `load Search(${saved.id.kind === "StringLiteral" ? JSON.stringify(savedId) : "..."})` : `${query.operation} ${record}`}${query.condition ? " where ..." : ""}${query.first ? " first" : ""}: ${typeName(query.type)}`) +
           `\n\n${
             saved
-              ? `saved ${record} search · ${savedId} · result type ${saved.recordFrom === "snapshot" ? "from the account snapshot" : "as written"}${saved.loadType ? ` · standalone search type ${saved.loadType}` : ""} · loaded by script id and used as defined (its filters and columns stay${query.condition ? "; the where clause is added to its filters" : ""})`
+              ? `saved ${record} search · ${savedId} · result type from the account snapshot${saved.loadType ? ` · standalone search type ${saved.loadType}` : ""} · loaded by script id (\`N/search.load\`) and used as defined (its filters and columns stay${query.condition ? "; the where clause is added to its filters" : ""})`
               : `${query.operation === "query" ? "query" : "search"} over \`${module}\``
           } · ${query.first ? "one optional read-only row" : "read-only rows"} ${query.summary ? "of aggregate buckets, with the grouped fields and aggregates (no \`id\`)" : `with \`id\` and ${query.select ? "the selected fields" : "the fields the program reads"}`}${clauses.length > 0 ? ` · ${clauses.join(" · ")}` : ""} · one ${query.operation} runs per expression`,
         span: keyword,
@@ -273,6 +301,12 @@ function initializerOwner(doc: SemanticDocument, offset: number): string | undef
 }
 
 /** Who owns a field: `Customer`, or `SalesOrder.item` for a line, or the record a projection was taken from. */
+/** `platform type Search` · what it is and how it is loaded. */
+function platformTypeHover(name: string): string {
+  const platform = platformType(name)!;
+  return code(`platform type ${platform.name}`) + `\n\n${platform.summary} · \`${platform.example}\` · NetSuite module \`${platform.module}\``;
+}
+
 /** `total: number` · `sum of SalesOrder.amount` · a result field of the summary row. */
 function resultFieldHover(result: ResultField): string {
   return code(`${result.name}: ${typeName(result.type)}`) + `\n\n${aggregateDetail(result)} · result field of the summary row, read-only; not a NetSuite field`;

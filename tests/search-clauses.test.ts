@@ -266,7 +266,7 @@ describe("order by and take", () => {
 
 describe("saved searches with clauses", () => {
   it("select restricts the row shape and plans columns through the saved-search planner; where ANDs; order by replaces the saved ordering", () => {
-    const js = output(scheduled(`    for o in search saved "customsearch_open_orders"\n        select memo\n        where total > 10\n        order by total desc {\n        log.debug(o.memo)\n    }`));
+    const js = output(scheduled(`    for o in load Search("customsearch_open_orders")\n        select memo\n        where total > 10\n        order by total desc {\n        log.debug(o.memo)\n    }`));
     expect(js).toContain('mynt$savedSearch([search.Type.SALES_ORDER, "transaction"], "customsearch_open_orders", [{ name: "total", sort: "DESC", hidden: true }, "memo"], [], [["total", search.Operator.GREATERTHAN, 10]])');
     expect(js).toContain("if (ordered) s.columns.forEach((column) => { column.sort = search.Sort.NONE; });");
     const netsuite = run(js);
@@ -274,11 +274,11 @@ describe("saved searches with clauses", () => {
     expect(netsuite.search.runs[0]!.filters).toEqual([[["memo", "isnot", "fourth"]], "and", [["total", "greaterthan", 10]]]);
     expect(netsuite.log.calls.map((c) => c.details)).toEqual(["first", "third", "second"]);
     expect(netsuite.search.savedDefinition("customsearch_open_orders")!.columns).toEqual([{ name: "memo" }, { name: "total" }]);
-    expect(first(scheduled(`    for o in search saved "customsearch_open_orders" select memo {\n        log.debug(o.total)\n    }`))).toContain("MYNT1050 'total' was not selected");
+    expect(first(scheduled(`    for o in load Search("customsearch_open_orders") select memo {\n        log.debug(o.total)\n    }`))).toContain("MYNT1050 'total' was not selected");
   });
 
   it("limit applies to a saved search too", () => {
-    expect(logged(scheduled(`    for o in search saved "customsearch_open_orders" order by total limit 1 {\n        log.debug(o.memo)\n    }`))).toEqual(["second"]);
+    expect(logged(scheduled(`    for o in load Search("customsearch_open_orders") order by total limit 1 {\n        log.debug(o.memo)\n    }`))).toEqual(["second"]);
   });
 });
 
@@ -308,7 +308,7 @@ describe("editor", () => {
     const all = labels(scheduled(`    let o = search SalesOrder\n        select memo\n        where total > 1\n        order by memo\n        limit 1\n        group by memo\n        §`));
     expect(all[0]).toBe("let");
     expect(all).not.toContain("select");
-    expect(labels(scheduled(`    let o = search saved "customsearch_open_orders"\n        §`)).slice(0, 6)).toEqual(["where", "select", "order by", "group by", "limit", "first"]);
+    expect(labels(scheduled(`    let o = load Search("customsearch_open_orders")\n        §`)).slice(0, 6)).toEqual(["where", "select", "order by", "group by", "limit", "first"]);
     expect(labels(scheduled(`    log.debug("x")\n    §`))[0]).toBe("let");
   });
 
@@ -316,7 +316,7 @@ describe("editor", () => {
     expect(site(scheduled(`    let o = search SalesOrder\n        select §`))).toBe("selectField");
     expect(labels(scheduled(`    let o = search SalesOrder\n        select §`)).slice(0, 7)).toEqual(["memo", "total", "entity", "amount", "mainline", "trandate", "subsidiary"]);
     expect(labels(scheduled(`    let o = search SalesOrder\n        select memo, §`)).slice(0, 6)).toEqual(["total", "entity", "amount", "mainline", "trandate", "subsidiary"]);
-    expect(labels(scheduled(`    let o = search saved "customsearch_open_orders"\n        select §`)).slice(0, 7)).toEqual(["memo", "total", "entity", "amount", "mainline", "trandate", "subsidiary"]);
+    expect(labels(scheduled(`    let o = load Search("customsearch_open_orders")\n        select §`)).slice(0, 7)).toEqual(["memo", "total", "entity", "amount", "mainline", "trandate", "subsidiary"]);
     expect(site(scheduled(`    let o = search SalesOrder\n        order by §`))).toBe("sortField");
     expect(labels(scheduled(`    let o = search Customer\n        order by §`))).toEqual(["comments", "email", "entityid", "subsidiary", "parent"]);
     expect(labels(scheduled(`    let o = search SalesOrder\n        order by total §`))).toEqual(["asc", "desc"]);
@@ -411,7 +411,7 @@ describe("first: one optional row", () => {
     expect(projected.unit!.kind === "Scheduled" ? projected.unit!.entryPoint.body[0] : undefined).toMatchObject({
       initializer: { type: { kind: "Optional", element: { exposes: [{ field: { id: "memo" } }] } } },
     });
-    const js = output(scheduled(`    let customer = search saved "customsearch_open_orders"\n        where total > 1\n        order by total\n        first`));
+    const js = output(scheduled(`    let customer = load Search("customsearch_open_orders")\n        where total > 1\n        order by total\n        first`));
     expect(js).toContain('mynt$savedSearch([search.Type.SALES_ORDER, "transaction"], "customsearch_open_orders", [{ name: "total", sort: "ASC", hidden: true }], [], [["total", search.Operator.GREATERTHAN, 1]], undefined, undefined, true)');
     const netsuite = run(js);
     expect(netsuite.search.runs[0]!.filters).toEqual([[["memo", "isnot", "fourth"]], "and", [["total", "greaterthan", 1]]]);

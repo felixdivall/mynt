@@ -20,6 +20,9 @@ import type {
   QueryOperation,
   SelectItem,
   AggregateCall,
+  LookupExpression,
+  ObjectPattern,
+  ProjectionExpression as ProjectionSyntax,
   RemoveStatement,
   SearchClause,
   TryStatement,
@@ -72,6 +75,9 @@ import {
   type LocalSymbol,
   type Logical,
   type Lookup,
+  type Destructure,
+  type DestructureBinding,
+  type FileLoad,
   type OptionalResolve,
   type LookupField,
   type LookupSource,
@@ -87,6 +93,7 @@ import {
   type UserEventType,
 } from "./bound.js";
 import { equalityOf, equalityOperators } from "./equality.js";
+import { isPlatformTypeName, loadKindOf, platformType } from "./loadable.js";
 import { toSearchPredicate } from "./search.js";
 import { suggest } from "./suggest.js";
 import {
@@ -341,6 +348,12 @@ function sourceOf(expression: Expression): string {
       return `${sourceOf(expression.object)}.${expression.property.name}`;
     case "CallExpression":
       return `${sourceOf(expression.callee)}${expression.typeArgument ? ` ${expression.typeArgument.name}` : ""}(...)`;
+    case "LookupExpression":
+      return `lookup ${sourceOf(expression.receiver)}`;
+    case "ProjectionExpression":
+      return `${sourceOf(expression.receiver)}[${expression.fields.map((f) => f.name).join(", ")}]`;
+    case "StringLiteral":
+      return JSON.stringify(expression.value);
     default:
       return "...";
   }
@@ -663,6 +676,15 @@ class Binder {
   private resolveRecordTypeName(name: Identifier): RecordSchema | undefined {
     const record = this.schema.getRecordByName(name.name);
     if (record) return record;
+    const platform = platformType(name.name);
+    if (platform) {
+      this.diagnostics.error(
+        DiagnosticCode.UnknownRecordType,
+        `'${platform.name}' is a platform type, not a record type: it has no fields and is only loaded, '${platform.example}'`,
+        name.span,
+      );
+      return undefined;
+    }
 
     const known = this.schema
       .listRecords()
@@ -757,9 +779,12 @@ class Binder {
   }
 
   private bindLet(statement: LetStatement, scope: Scope): BoundStatement | undefined {
+    if (statement.initializer.kind === "Identifier" && statement.initializer.name === "") return undefined; // cut short; the parser reported it
     // `let x = value or ...` is the one place an optional is resolved: the emitter hoists the test before the binding.
     const initializer = statement.initializer.kind === "OrExpression" ? this.bindOptionalResolve(statement.initializer, scope) : this.bindValue(statement.initializer, scope);
     if (!initializer) return undefined;
+    if (statement.pattern) return this.bindDestructure(statement, statement.pattern, initializer, scope);
+    if (!statement.name) return undefined;
 
     if (initializer.type === "Void") {
       const what = initializer.kind === "BuiltinCall" ? `${initializer.builtin.name}(...)` : "this expression";
@@ -801,6 +826,82 @@ class Binder {
 
     this.symbols.push({ local, scope: { start: statement.span.end, end: scope.span.end } });
     return { kind: "LocalDeclaration", local, initializer, span: statement.span };
+  }
+
+  /**
+   * `let { email, comments: note } = value`: the value must be a projection
+   * (the one structured shape with named fields and no identity), every
+   * listed field one of its fields, and every local a fresh name. A
+   * one-field lookup is the field's value, not a projection, so it is
+   * bound with a plain `let`.
+   */
+  private bindDestructure(statement: LetStatement, pattern: ObjectPattern, source: BoundExpression, scope: Scope): BoundStatement | undefined {
+    const written = `{ ${pattern.fields.map((f) => (f.colonSpan ? `${f.source.name}: ${f.local.name}` : f.source.name)).join(", ")} }`;
+    if (!isProjectionType(source.type)) {
+      const subject = sourceOf(statement.initializer);
+      let message: string;
+      if (isRecordType(source.type) || isReferenceType(source.type) || isSummaryType(source.type)) {
+        const example = pattern.fields.map((f) => f.source.name).join(", ") || "email, comments";
+        message =
+          `'let ${written} = ...' binds the fields of a projection, and '${subject}' is a ${typeName(source.type)}. ` +
+          (isSummaryType(source.type) ? `Read its result fields directly, like '${subject}.${pattern.fields[0]?.source.name ?? "total"}'` : `Project the fields first: 'let ${written} = ${subject}[${example}]'`);
+      } else if (source.kind === "Lookup" && source.fields.length === 1) {
+        message =
+          `'let ${written} = ...' binds the fields of a projection, but a lookup of one field is that field's value (${typeName(source.type)}), not a projection. ` +
+          `Write 'let ${pattern.fields[0]?.local.name ?? source.fields[0]!.field.id} = ${subject}'`;
+      } else {
+        message = `'let ${written} = ...' binds the fields of a projection, and '${subject}' is a ${typeName(source.type)} value, which has no fields to bind`;
+      }
+      this.diagnostics.error(DiagnosticCode.DestructureShape, message, statement.initializer.span);
+      return undefined;
+    }
+    const projection = source.type;
+    const bindings: DestructureBinding[] = [];
+    const seen = new Map<string, Span>();
+    let ok = true;
+    // An empty pattern was reported by the parser; the declaration still binds (with nothing) so the editor knows the value's shape.
+    for (const entry of pattern.fields) {
+      const projected = projection.fields.find((f) => f.field.id === entry.source.name);
+      if (!projected) {
+        ok = false;
+        const names = projection.fields.map((f) => f.field.id);
+        const hint = suggest(entry.source.name, names);
+        const schemaField = projection.record.fields.get(entry.source.name);
+        this.diagnostics.error(
+          DiagnosticCode.DestructureShape,
+          `'${entry.source.name}' is not in this projection (${typeName(projection)}); bind one of ${names.join(", ")}` +
+            (hint ? `. Did you mean '${hint}'?` : schemaField ? `. '${entry.source.name}' is a ${projection.record.name} field, but it was not selected; add it where the projection is made` : ""),
+          entry.source.span,
+        );
+        continue;
+      }
+      const earlier = seen.get(projected.field.id);
+      if (earlier) {
+        ok = false;
+        this.diagnostics.error(DiagnosticCode.DestructureShape, `'${projected.field.id}' is bound twice (first at column ${earlier.start.column}); bind each field once`, entry.source.span);
+        continue;
+      }
+      seen.set(projected.field.id, entry.source.span);
+      const local: LocalSymbol = { name: entry.local.name, type: projected.type, origin: "let", declaredAt: entry.local.span };
+      const clash = scope.declare(local);
+      if (clash) {
+        ok = false;
+        const { existing, enclosing } = clash;
+        const what = existing.origin === "parameter" ? "the entry point parameter" : "a local";
+        const where = enclosing ? "an enclosing scope" : "this scope";
+        this.diagnostics.error(
+          DiagnosticCode.DuplicateLocal,
+          `'${local.name}' is already declared in ${where} as ${what} (line ${existing.declaredAt.start.line})` + (!entry.colonSpan ? `; bind the field under another name, '${entry.source.name}: other'` : ""),
+          entry.local.span,
+        );
+        continue;
+      }
+      this.symbols.push({ local, scope: { start: statement.span.end, end: scope.span.end } });
+      bindings.push({ field: projected.field, fieldSpan: entry.source.span, local, aliased: entry.colonSpan !== undefined });
+    }
+    if (!ok) return undefined;
+    const destructure: Destructure = { kind: "Destructure", source, record: projection.record, bindings, span: statement.span };
+    return destructure;
   }
 
   private bindAssignment(
@@ -1434,6 +1535,9 @@ class Binder {
       case "ProjectionExpression":
         return this.denoteProjection(expression, scope);
 
+      case "LookupExpression":
+        return this.denoteLookup(expression, scope);
+
       case "OrExpression":
         this.bindValue(expression.value, scope);
         this.diagnostics.error(
@@ -1604,7 +1708,7 @@ class Binder {
     let record = expression.recordType ? this.resolveRecordTypeName(expression.recordType) : undefined;
     let source: Query["source"] = { kind: "adHoc" };
     if (expression.saved) {
-      const resolved = this.resolveSavedSearch(expression, record, scope);
+      const resolved = this.resolveSavedSearch(expression, scope);
       if (!resolved) return undefined;
       record = resolved.record;
       source = resolved.source;
@@ -1652,6 +1756,7 @@ class Binder {
     const query: Query = {
       kind: "Query",
       operation,
+      operationSpan: expression.keywordSpan,
       source,
       // An inferred saved-search type has no written name: a zero-width reference at the id, so no token or hover claims the string.
       recordType: { kind: "RecordTypeReference", record, span: expression.recordType?.span ?? { start: expression.saved!.id!.span.start, end: expression.saved!.id!.span.start } },
@@ -2052,28 +2157,24 @@ class Binder {
   }
 
   /**
-   * `search saved [T] id`: the saved search's result record type. Mynt does
-   * not make the author repeat what NetSuite owns: a literal id the account
-   * snapshot knows infers the type, and a type is written only when the
-   * snapshot cannot say (an id it does not list, or a dynamic id) or to
-   * assert it, in which case the snapshot checks the assertion. A standalone
-   * search type the snapshot marks is passed to `search.load`; nothing else is.
+   * `load Search(id)`: the saved search's result record type, from the
+   * account snapshot. Mynt does not make the author repeat what NetSuite
+   * owns, and does not guess: a literal id the snapshot knows infers the
+   * type; an id it does not know, or a value, is reported, since nothing
+   * in source states the result type (an explicit form is deliberately not
+   * in the language yet). A standalone search type the snapshot marks is
+   * passed to `search.load`; nothing else is.
    */
-  private resolveSavedSearch(
-    expression: QueryExpression,
-    explicit: RecordSchema | undefined,
-    scope: Scope,
-  ): { record: RecordSchema; source: Query["source"] } | undefined {
+  private resolveSavedSearch(expression: QueryExpression, scope: Scope): { record: RecordSchema; source: Query["source"] } | undefined {
     const clause = expression.saved!;
     if (!clause.id) return undefined; // the parser reported the missing id
     const idDenotation = this.denote(clause.id, scope);
     if (!idDenotation) return undefined;
     if (idDenotation.kind !== "value") {
-      const written = clause.id.kind === "Identifier" ? clause.id.name : "...";
       this.diagnostics.error(
         DiagnosticCode.InvalidSavedSearchId,
         idDenotation.kind === "recordType"
-          ? `Expected the saved search id after the record type, like 'search saved ${written} "customsearch_x"'; '${written}' alone is a record type, not a script id`
+          ? `'${idDenotation.record.name}' is a record type, not a saved search id. Write the script id as a string: 'load Search("customsearch_x")'`
           : `A saved search is named by its script id, a string like "customsearch_active_customers"`,
         clause.id.span,
       );
@@ -2088,33 +2189,23 @@ class Binder {
       );
       return undefined;
     }
-    if (expression.recordType && !explicit) return undefined; // the unknown type was reported
-    const span = spanFrom(clause.keywordSpan, clause.id.span);
-    const known = id.kind === "StringLiteral" ? this.schema.getSavedSearch(id.value) : undefined;
-    const loadType = known?.searchType;
-    if (explicit) {
-      if (known && known.record !== explicit.name) {
-        this.diagnostics.error(
-          DiagnosticCode.SavedSearchTypeMismatch,
-          `Saved search "${(id as { value: string }).value}" returns ${known.record}, not ${explicit.name}, according to the account snapshot`,
-          expression.recordType!.span,
-        );
-        return undefined;
-      }
-      return { record: explicit, source: { kind: "saved", id, clause: span, recordFrom: "explicit", loadType } };
-    }
     if (id.kind !== "StringLiteral") {
       this.diagnostics.error(
         DiagnosticCode.UnknownSavedSearch,
-        `The result type of a saved search named by a value cannot be inferred; write the record type, like 'search saved Customer ${sourceOf(clause.id)}'`,
+        `The result type of a saved search named by a value cannot be known at compile time: 'load Search(${sourceOf(clause.id)})' would have rows of no known record type. Name the search by its literal script id, which the account snapshot knows`,
         clause.id.span,
       );
       return undefined;
     }
+    const known = this.schema.getSavedSearch(id.value);
     if (!known) {
+      const names = this.schema.listSavedSearches().map((s) => s.id);
+      const hint = suggest(id.value, names);
       this.diagnostics.error(
         DiagnosticCode.UnknownSavedSearch,
-        `The current account snapshot does not know the result type of saved search "${id.value}". Write 'search saved Customer "${id.value}"' (with its record type) to provide the type explicitly`,
+        `The current account snapshot does not list saved search "${id.value}", so its result type is unknown. ` +
+          (hint ? `Did you mean "${hint}"? ` : "") +
+          `Pull a snapshot of the account that has it ('mynt schema pull'), or add it under 'savedSearches' in the snapshot${names.length > 0 ? `; known: ${names.join(", ")}` : ""}`,
         clause.id.span,
       );
       return undefined;
@@ -2128,7 +2219,8 @@ class Binder {
       );
       return undefined;
     }
-    return { record, source: { kind: "saved", id, clause: span, recordFrom: "snapshot", loadType } };
+    this.dependencies.add("N/search");
+    return { record, source: { kind: "saved", id, clause: clause.span, typeSpan: clause.keywordSpan, recordFrom: "snapshot", loadType: known.searchType } };
   }
 
   /** The predicate shapes the backends can express. Anything else is reported, never approximated. */
@@ -2321,6 +2413,14 @@ class Binder {
           this.diagnostics.error(
             DiagnosticCode.MemberOnNonRecord,
             `Cannot access '.${name}' on a sublist; iterate its lines: 'for line in ${sourceOf(expression.object)}', then use 'line.${name}'`,
+            expression.property.span,
+          );
+          return undefined;
+        }
+        if (object.type === "File") {
+          this.diagnostics.error(
+            DiagnosticCode.MemberOnNonRecord,
+            `A File has no members in Mynt yet; it can be loaded ('load File(...)') and passed along, but its properties and contents are not modeled`,
             expression.property.span,
           );
           return undefined;
@@ -2765,7 +2865,76 @@ class Binder {
    * type decides where the values come from (see LookupSource); every
    * field is checked against the schema and listed once.
    */
-  private denoteProjection(expression: ProjectionExpression, scope: Scope): Denotation | undefined {
+  /**
+   * `lookup receiver[fields]` / `lookup receiver select fields`: the explicit
+   * spelling of a projection. Both normalize to the projection the receiver's
+   * `[...]` would make, so the three spellings are one operation with one
+   * lowering; the word only names it. The fields must be given once, as a
+   * `[...]` or a `select`, and must be fields of the one record: no
+   * aggregates, no joins, since a lookup has one known identity.
+   */
+  private denoteLookup(expression: LookupExpression, scope: Scope): Denotation | undefined {
+    const { receiver, select } = expression;
+    if (receiver.kind === "ProjectionExpression" && select) {
+      this.diagnostics.error(
+        DiagnosticCode.LookupWithoutFields,
+        `Name the fields once: in the '[...]' or in 'select', not both`,
+        select.keywordSpan,
+      );
+      return undefined;
+    }
+    if (receiver.kind === "ProjectionExpression") return this.denoteProjection(receiver, scope, expression.keywordSpan);
+    if (!select) {
+      this.bindValue(receiver, scope); // its own errors still surface
+      this.diagnostics.error(
+        DiagnosticCode.LookupWithoutFields,
+        `'lookup' requires one or more selected fields: write 'lookup ${sourceOf(receiver)}[email, ...]' or 'lookup ${sourceOf(receiver)} select email, ...'. ` +
+          `Use 'load ${receiver.kind === "CallExpression" && receiver.callee.kind === "Identifier" ? receiver.callee.name : "Customer"}(...)' to retrieve the full record`,
+        expression.keywordSpan,
+      );
+      return undefined;
+    }
+    const fields: Identifier[] = [];
+    let ok = true;
+    for (const item of select.items) {
+      if (item.value.kind === "AggregateCall") {
+        ok = false;
+        this.diagnostics.error(DiagnosticCode.InvalidAggregate, `A lookup reads fields of one record; '${item.value.function.name}(...)' aggregates rows, which is a search feature ('search T select ...')`, item.value.span);
+        continue;
+      }
+      if (item.alias) {
+        ok = false;
+        this.diagnostics.error(DiagnosticCode.ResultName, `A lookup's fields keep their own names; only a search aggregate takes a result name. Write 'select ${sourceOf(item.value)}'`, item.equalsSpan ?? item.alias.span);
+        continue;
+      }
+      if (item.value.kind !== "Identifier") {
+        ok = false;
+        this.diagnostics.error(
+          DiagnosticCode.UnsupportedJoin,
+          `A lookup reads fields of the one record it names; '${sourceOf(item.value)}' follows a relationship, which is a search feature. Look the referenced record up itself: '${sourceOf(item.value).split(".")[0]}[...]' on its reference`,
+          item.value.span,
+        );
+        continue;
+      }
+      if (item.value.name === "") {
+        ok = false; // cut short; the parser reported it
+        continue;
+      }
+      fields.push(item.value);
+    }
+    if (!ok) {
+      this.bindValue(receiver, scope);
+      return undefined;
+    }
+    if (fields.length === 0) {
+      this.bindValue(receiver, scope);
+      return undefined; // the parser reported the empty select
+    }
+    const projection: ProjectionSyntax = { kind: "ProjectionExpression", receiver, fields, openSpan: select.keywordSpan, closeSpan: undefined, span: expression.span };
+    return this.denoteProjection(projection, scope, expression.keywordSpan);
+  }
+
+  private denoteProjection(expression: ProjectionExpression, scope: Scope, keywordSpan?: Span): Denotation | undefined {
     const receiver = this.denote(expression.receiver, scope);
     if (!receiver) return undefined;
     const subject = sourceOf(expression.receiver);
@@ -2831,7 +3000,7 @@ class Binder {
 
     if (source === "lookupFields") this.dependencies.add("N/search");
     const type = fields.length === 1 ? fields[0]!.type : projectionType(record, fields.map((f) => ({ field: f.field, type: f.type })));
-    const lookup: Lookup = { kind: "Lookup", receiver: receiver.bound, record, fields, source, type, span: expression.span };
+    const lookup: Lookup = { kind: "Lookup", receiver: receiver.bound, record, fields, source, type, keywordSpan, span: expression.span };
     return { kind: "value", type, bound: lookup };
   }
 
@@ -2866,6 +3035,8 @@ class Binder {
     }
 
     const { builtin } = callee;
+    // `load File(456)` and the other loadable platform objects: the type after `load` decides the operation (see loadable.ts).
+    if (expression.typeArgument && isPlatformTypeName(expression.typeArgument.name)) return this.denotePlatformLoad(builtin, expression, args);
     const record = this.bindRecordTypeArgument(builtin, expression, scope);
     if (record === null) return undefined;
     const recordType: RecordTypeReference | undefined =
@@ -3072,6 +3243,47 @@ class Binder {
 
     this.resolveRecordTypeName(typeArgument);
     return null;
+  }
+
+  /**
+   * `load File(456)`: a loadable platform type after `load`. Only `load`
+   * applies to one (`create File` means nothing), it takes one id, and the
+   * result is the platform value. `Search` never reaches here: the parser
+   * makes `load Search(id)` a search expression.
+   */
+  private denotePlatformLoad(builtin: Builtin, expression: CallExpression, args: (BoundExpression | undefined)[]): Denotation | undefined {
+    const name = expression.typeArgument!.name;
+    const platform = platformType(name)!;
+    if (builtin.id !== "load") {
+      this.diagnostics.error(
+        DiagnosticCode.RecordTypeArgument,
+        `'${name}' is a platform type that can only be loaded: '${platform.example}'. ${builtin.name} works on record types`,
+        expression.typeArgument!.span,
+      );
+      return undefined;
+    }
+    if (platform.kind === "search") {
+      this.diagnostics.error(DiagnosticCode.InvalidSavedSearchId, `Expected the saved search's script id, like '${platform.example}'`, expression.span);
+      return undefined;
+    }
+    if (expression.targetType) {
+      this.diagnostics.error(DiagnosticCode.RecordTypeArgument, `load does not take a target record type; remove 'to ${expression.targetType.name}'`, expression.targetType.span);
+      return undefined;
+    }
+    if (args.length !== 1) {
+      this.diagnostics.error(DiagnosticCode.ArgumentCount, `load ${name}(...) expects 1 argument, the file's internal id, but received ${args.length}`, expression.span);
+      return undefined;
+    }
+    const id = args[0];
+    if (!id) return undefined;
+    if (!acceptsArgument("RecordId", id.type)) {
+      this.diagnostics.error(DiagnosticCode.InvalidRecordId, `A file id must be a number or a string, but load ${name}(...) received ${typeName(id.type)}`, expression.arguments[0]!.span);
+      return undefined;
+    }
+    if (!this.checkWholeNumberId(id, `load ${name}(...)`, expression.arguments[0]!.span)) return undefined;
+    this.dependencies.add(platform.module);
+    const load: FileLoad = { kind: "FileLoad", id, operationSpan: expression.callee.span, typeSpan: expression.typeArgument!.span, type: "File", span: expression.span };
+    return { kind: "value", type: "File", bound: load };
   }
 
   /**

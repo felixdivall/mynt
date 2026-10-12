@@ -1,9 +1,9 @@
 ================================================================================
-saved search with an inferred type
+saved search: load Search with an inferred type
 ================================================================================
 
 scheduled {
-    let customers = search saved "customsearch_active_customers"
+    let customers = load Search("customsearch_active_customers")
     for c in customers { }
 }
 
@@ -11,89 +11,116 @@ scheduled {
 
 (source_file
   (scheduled
-    body: (block
+    (block
       (let_statement
-        name: (identifier)
-        value: (saved_search
-          function: (identifier)
-          id: (string)))
+        (identifier)
+        (call_expression
+          (identifier)
+          (type_identifier)
+          (arguments
+            (string))))
       (for_statement
-        variable: (identifier)
-        iterable: (identifier)
-        body: (block)))))
+        (identifier)
+        (identifier)
+        (block)))))
 
 ================================================================================
-saved search with an explicit type, a local id, and where on the next line
+saved search with clauses on the next lines, in any order
 ================================================================================
 
 scheduled {
-    let searchId = "customsearch_open_orders"
-    let orders = search saved SalesOrder searchId
-        where entity === Customer(123)
-    let notes = search saved SystemNote "customsearch_system_notes"
+    let a = load Search("customsearch_open_orders")
+        where total > 1
+        select memo
+        order by memo desc
+        limit 10
+    let b = load Search("customsearch_totals")
+        group by entity
+        select entity, total = sum(amount)
+        first
+        or return
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
   (scheduled
-    body: (block
+    (block
       (let_statement
-        name: (identifier)
-        value: (string))
+        (identifier)
+        (query_expression
+          (call_expression
+            (identifier)
+            (type_identifier)
+            (arguments
+              (string)))
+          (where_clause
+            (binary_expression
+              (identifier)
+              (number)))
+          (select_clause
+            (identifier))
+          (order_clause
+            (sort_key
+              (identifier)))
+          (limit_clause
+            (number))))
       (let_statement
-        name: (identifier)
-        value: (query_expression
-          query: (saved_search
-            function: (identifier)
-            type: (type_identifier)
-            id: (identifier))
-          clause: (where_clause
-            condition: (binary_expression
-              left: (identifier)
-              right: (call_expression
-                function: (identifier)
-                arguments: (arguments
-                  (number)))))))
-      (let_statement
-        name: (identifier)
-        value: (saved_search
-          function: (identifier)
-          type: (type_identifier)
-          id: (string))))))
+        (identifier)
+        (or_expression
+          (query_expression
+            (call_expression
+              (identifier)
+              (type_identifier)
+              (arguments
+                (string)))
+            (group_clause
+              (identifier))
+            (select_clause
+              (identifier)
+              (aggregate_item
+                (identifier)
+                (aggregate_call
+                  (aggregate_function)
+                  (identifier))))
+            (first_clause))
+          (return_statement))))))
 
 ================================================================================
-saved as a local name
+saved and Search as local names; search saved is just an error now
 ================================================================================
 
 scheduled {
     let saved = "x"
-    log.debug(saved)
+    let Search = saved
+    log.debug(Search)
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
   (scheduled
-    body: (block
+    (block
       (let_statement
-        name: (identifier)
-        value: (string))
+        (identifier)
+        (string))
+      (let_statement
+        (identifier)
+        (identifier))
       (expression_statement
         (call_expression
-          function: (member_expression
-            object: (identifier)
-            property: (identifier))
-          arguments: (arguments
+          (member_expression
+            (identifier)
+            (identifier))
+          (arguments
             (identifier)))))))
 
 ================================================================================
-saved search cut short keeps the next statement
+load Search cut short recovers like any unclosed call
 ================================================================================
 
 scheduled {
-    let customers = search saved
-    let notes = search saved SystemNote
+    let c = load Search("customsearch_x"
     log.debug("next")
 }
 
@@ -104,17 +131,16 @@ scheduled {
     body: (block
       (let_statement
         name: (identifier)
-        value: (saved_search
-          function: (identifier)))
-      (let_statement
-        name: (identifier)
-        value: (saved_search
+        value: (call_expression
           function: (identifier)
-          id: (identifier)))
-      (expression_statement
-        (call_expression
-          function: (member_expression
-            object: (identifier)
-            property: (identifier))
+          type: (type_identifier)
           arguments: (arguments
-            (string)))))))
+            (call_expression
+              function: (member_expression
+                object: (call_expression
+                  function: (string)
+                  type: (type_identifier))
+                property: (identifier))
+              arguments: (arguments
+                (string)))
+            (MISSING ")")))))))

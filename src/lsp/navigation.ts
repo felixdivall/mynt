@@ -59,7 +59,9 @@ function locals(block: Block): OutlineSymbol[] {
   for (const statement of block.statements) {
     if (statement.kind === "LetStatement") {
       const let_ = statement as LetStatement;
-      out.push({ name: let_.name.name, kind: "local", detail: "let", span: let_.span, selectionSpan: let_.name.span, children: [] });
+      if (let_.name) out.push({ name: let_.name.name, kind: "local", detail: "let", span: let_.span, selectionSpan: let_.name.span, children: [] });
+      // A pattern declares one local per field, each an outline entry of its own.
+      for (const field of let_.pattern?.fields ?? []) out.push({ name: field.local.name, kind: "local", detail: "let", span: let_.span, selectionSpan: field.local.span, children: [] });
     } else if (statement.kind === "IfStatement") {
       out.push(...locals(statement.thenBlock));
       if (statement.elseBlock) out.push(...locals(statement.elseBlock));

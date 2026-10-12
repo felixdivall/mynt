@@ -1,11 +1,12 @@
-// A saved search is loaded by its script id and used as defined: its own
-// filters and columns stay, and `where` adds to them. Its result type is
-// not written: the account snapshot knows what the saved search returns
-// (`mynt build examples/saved-search.mn --schema tests/fixtures/account-snapshot.json`
-// uses the test account; a snapshot that does not list the search needs
-// `search saved Customer "..."` instead).
+// A saved search is loaded by its script id, like any platform object:
+// `load Search("...")`. It is used as defined (its own filters and columns
+// stay) and takes the same clauses as `search T`; `where` adds to its
+// filters. Its result type is not written: the account snapshot knows what
+// the saved search returns (`mynt build examples/saved-search.mn --schema
+// tests/fixtures/account-snapshot.json` uses the test account; a snapshot
+// that does not list the search is an error, never a guess).
 scheduled {
-    let customers = search saved "customsearch_active_customers"
+    let customers = load Search("customsearch_active_customers")
         where comments === ""
 
     for customer in customers {

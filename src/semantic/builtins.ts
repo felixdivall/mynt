@@ -16,7 +16,7 @@ import type { FieldType } from "../schema/types.js";
 import type { MyntType } from "./types.js";
 
 /** SuiteScript modules the compiler knows how to depend on. */
-export type NetSuiteModule = "N/log" | "N/record" | "N/query" | "N/search";
+export type NetSuiteModule = "N/log" | "N/record" | "N/query" | "N/search" | "N/file";
 
 /**
  * What a built-in parameter accepts. `RecordId` is an internal id, written

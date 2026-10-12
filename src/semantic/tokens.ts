@@ -11,7 +11,8 @@
  * yields a variable at `where`, because that is what bound there.
  *
  * The taxonomy an editor sees, all standard LSP types and modifiers:
- *   fn let return if for in saved where select order group by asc desc limit first or try catch finally to save ...   keyword
+ *   fn let return if for in where select order group by asc desc limit first or try catch finally to save ...   keyword
+ *   Search File                                                 type + defaultLibrary (platform types, like string)
  *   query search load create copy transform      function + defaultLibrary
  *   log / log.debug                              namespace / method + defaultLibrary
  *   string number boolean                        type + defaultLibrary
@@ -22,6 +23,7 @@
  * The kinds and modifiers are the standard LSP vocabulary so that any
  * theme can style them; nothing here encodes protocol indexes.
  */
+import { isPlatformTypeName } from "./loadable.js";
 import { isPrimitiveTypeName } from "./types.js";
 import type { Identifier } from "../parser/ast.js";
 import type { Span } from "../diagnostics.js";
@@ -35,6 +37,9 @@ import type {
   LocalReference,
   LocalSymbol,
   LookupField,
+  Lookup,
+  Destructure,
+  FileLoad,
   QueryField,
   RecordIdRead,
   RecordTypeReference,
@@ -161,6 +166,24 @@ function collectBound(doc: SemanticDocument, add: Add): void {
       case "RecordIdRead":
         add((node as unknown as RecordIdRead).nameSpan, "property", "readonly");
         break;
+      case "Destructure": {
+        // The locals are declarations; a source field named apart from its local (`comments: note`) is a field.
+        const destructure = node as unknown as Destructure;
+        for (const binding of destructure.bindings) {
+          add(binding.local.declaredAt, "variable", "declaration");
+          if (binding.aliased) add(binding.fieldSpan, "property", ...(binding.field.writable ? [] : (["readonly"] as const)));
+        }
+        break;
+      }
+      case "FileLoad":
+        add((node as unknown as FileLoad).operationSpan, "function", "defaultLibrary");
+        add((node as unknown as FileLoad).typeSpan, "type", "defaultLibrary");
+        break;
+      case "Lookup": {
+        const lookup = node as unknown as Lookup;
+        if (lookup.keywordSpan) add(lookup.keywordSpan, "function", "defaultLibrary");
+        break;
+      }
       case "ResultFieldRead":
         // An aggregate's result is a read-only member of the summary row, like any row field.
         add((node as unknown as { nameSpan: Span }).nameSpan, "property", "readonly");
@@ -249,9 +272,17 @@ function collectSyntax(doc: SemanticDocument, add: Add): void {
         add(n.inSpan as Span, "keyword");
         break;
       case "QueryExpression":
-        // `query`/`search` are builtin operations like `load`, not structural syntax; `saved` and the clause words are.
+        // `query`/`search`/`load` are builtin operations, not structural syntax; `Search` is a platform type; the clause words are keywords.
         add(n.keywordSpan as Span, "function", "defaultLibrary");
-        if (n.saved) add((n.saved as { keywordSpan: Span }).keywordSpan, "keyword");
+        if (n.saved) add((n.saved as { keywordSpan: Span }).keywordSpan, "type", "defaultLibrary");
+        break;
+      case "LookupExpression":
+        add(n.keywordSpan as Span, "function", "defaultLibrary");
+        break;
+      case "CallExpression":
+        if (n.toSpan) add(n.toSpan as Span, "keyword");
+        // `load File(1)`: a platform type is a type from the default library, like `string`.
+        if (n.typeArgument && isPlatformTypeName((n.typeArgument as Identifier).name)) add((n.typeArgument as Identifier).span, "type", "defaultLibrary");
         break;
       case "WhereClause":
       case "SelectClause":
@@ -266,9 +297,6 @@ function collectSyntax(doc: SemanticDocument, add: Add): void {
         break;
       case "SortKey":
         if (n.directionSpan) add(n.directionSpan as Span, "keyword");
-        break;
-      case "CallExpression":
-        if (n.toSpan) add(n.toSpan as Span, "keyword");
         break;
       case "StringLiteral":
         add(node.span, "string");

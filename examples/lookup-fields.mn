@@ -1,0 +1,25 @@
+// Three spellings of one operation: read selected fields of one record.
+//
+//   Customer(123)[email, comments]          compact
+//   lookup Customer(123)[email, comments]   the operation named
+//   lookup Customer(123) select ...         the query-style vocabulary
+//
+// Each is one N/search.lookupFields call for a reference, or local reads
+// for a record already loaded. `select` defines the returned shape;
+// destructuring defines how that shape is bound locally.
+scheduled {
+    let info = lookup Customer(123)
+        select email, comments
+
+    let { email, comments: note } = info
+    log.debug(email)
+    log.debug(note)
+
+    let { entityid } = Customer(123)[entityid, email]
+    log.debug(entityid)
+
+    let customer = load Customer(123)
+    let { comments } = lookup customer
+        select comments, email
+    log.debug(comments)
+}

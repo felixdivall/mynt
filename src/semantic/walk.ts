@@ -34,6 +34,8 @@ export function directExpressions(statement: BoundStatement): BoundExpression[] 
   switch (statement.kind) {
     case "LocalDeclaration":
       return [statement.initializer];
+    case "Destructure":
+      return [statement.source];
     case "FieldWrite":
       return [statement.receiver, statement.value];
     case "SaveRecord":
@@ -86,6 +88,7 @@ export function forEachExpression(expression: BoundExpression, visit: (expressio
     case "AliasReference":
       break;
     case "RecordReference":
+    case "FileLoad":
       forEachExpression(expression.id, visit);
       break;
     case "BuiltinCall":
